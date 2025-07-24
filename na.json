@@ -44,11 +44,14 @@
     },
     {
       "name": "classify-incident-agent",
-      "description": "Classify the best agent based on incident text analysis",
-      "command": "echo '🤖 CLASSIFYING INCIDENT TO APPROPRIATE AGENT'\necho '=========================================='\necho 'Analyzing incident details:'\necho '  Title: ${incident_title}'\necho '  Body: ${incident_body}'\necho '  Tags: ${all_tags}'\necho '  Hostname: ${hostname}'\necho ''\n\n# Convert all text to lowercase for analysis\nTITLE_LOWER=$(echo \"${incident_title}\" | tr '[:upper:]' '[:lower:]')\nBODY_LOWER=$(echo \"${incident_body}\" | tr '[:upper:]' '[:lower:]')\nTAGS_LOWER=$(echo \"${all_tags}\" | tr '[:upper:]' '[:lower:]')\nHOSTNAME_LOWER=$(echo \"${hostname}\" | tr '[:upper:]' '[:lower:]')\n\n# Combine all text for analysis\nALL_TEXT=\"$TITLE_LOWER $BODY_LOWER $TAGS_LOWER $HOSTNAME_LOWER\"\n\necho 'Classification logic:'\necho '  Checking for EU indicators...'\n\n# Check for EU indicators\nif echo \"$ALL_TEXT\" | grep -E -q '(eu|europe|european|eu-|dublin|london|frankfurt|paris|amsterdam)'; then\n  AGENT=\"chatops-eu\"\n  echo '  ✅ EU indicators found -> chatops-eu'\nelif echo \"$ALL_TEXT\" | grep -E -q '(integration|staging|test|pre-prod|int-|stage-|dev-|qa)'; then\n  AGENT=\"chatops-na-integration\"\n  echo '  ✅ Integration/Staging indicators found -> chatops-na-integration'\nelse\n  AGENT=\"chatops-na\"\n  echo '  ✅ Default to NA production -> chatops-na'\nfi\n\necho ''\necho \"Final classification: $AGENT\"\necho \"$AGENT\"",
+      "description": "Classify the best agent based on incident text analysis using LLM",
       "executor": {
-        "type": "command",
-        "config": {}
+        "type": "agent",
+        "config": {
+          "agent_name": "chatops-na",
+          "model": "gpt-4o",
+          "message": "Analyze this incident and classify which agent should handle it. Based on the incident details below, respond with ONLY one of these agent names: 'chatops-eu', 'chatops-na-integration', or 'chatops-na'. Rules: Use 'chatops-eu' if incident mentions EU/Europe/European regions, cities like Dublin/London/Frankfurt/Paris/Amsterdam, or EU-specific infrastructure. Use 'chatops-na-integration' if incident mentions integration/staging/test/pre-prod/dev/qa environments. Otherwise use 'chatops-na'. Incident Title: ${incident_title}. Incident Body: ${incident_body}. Tags: ${all_tags}. Hostname: ${hostname}. Respond with only the agent name."
+        }
       },
       "depends": [
         "validate-incident"
