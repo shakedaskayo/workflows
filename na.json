@@ -14,7 +14,7 @@
     "max_retries": "3",
     "customer_impact": "UNKNOWN",
     "affected_services": "NA",
-    "environment": "$TAGS[Env]",
+    "environment": "$TAGS",
     "alert_id": "$ALERT_ID",
     "alert_status": "$ALERT_STATUS", 
     "alert_priority": "$ALERT_PRIORITY",
@@ -43,9 +43,20 @@
       "output": "validation_status"
     },
     {
+      "name": "parse-environment-from-tags",
+      "description": "Extract environment from Datadog tags",
+      "command": "echo '🏷️ PARSING ENVIRONMENT FROM DATADOG TAGS'\necho '========================================'\necho 'Raw tags from Datadog: ${environment}'\necho ''\n\n# Parse Environment tag from comma-separated list\n# Tags format: \"monitor, name:myService, role:computing-node, Environment:production\"\nENV_VALUE=\"\"\n\n# Convert to lowercase for case-insensitive matching\nTAGS_LOWER=$(echo \"${environment}\" | tr '[:upper:]' '[:lower:]')\necho 'Tags (lowercase): '\"$TAGS_LOWER\"\n\n# Extract environment value using different possible formats\nif echo \"$TAGS_LOWER\" | grep -q \"environment:\"; then\n  # Format: Environment:production\n  ENV_VALUE=$(echo \"$TAGS_LOWER\" | grep -o \"environment:[^,]*\" | cut -d: -f2 | tr -d ' ')\nelif echo \"$TAGS_LOWER\" | grep -q \"env:\"; then\n  # Format: env:production  \n  ENV_VALUE=$(echo \"$TAGS_LOWER\" | grep -o \"env:[^,]*\" | cut -d: -f2 | tr -d ' ')\nelse\n  echo '⚠️ No Environment or env tag found in tags'\n  # Default fallback\n  ENV_VALUE=\"development\"\nfi\n\n# Clean up the value\nENV_VALUE=$(echo \"$ENV_VALUE\" | tr -d '\"' | tr -d \"'\" | xargs)\n\necho 'Extracted environment: '\"$ENV_VALUE\"\n\n# Validate and normalize environment values\ncase \"$ENV_VALUE\" in\n  \"production\"|\"prod\")\n    ENV_VALUE=\"na-production\"\n    echo 'Normalized to: na-production'\n    ;;\n  \"eu-production\"|\"eu-prod\")\n    ENV_VALUE=\"eu-production\"\n    echo 'Normalized to: eu-production'\n    ;;\n  \"integration\"|\"int\"|\"staging\")\n    ENV_VALUE=\"na-integration\"\n    echo 'Normalized to: na-integration'\n    ;;\n  \"development\"|\"dev\")\n    ENV_VALUE=\"development\"\n    echo 'Normalized to: development'\n    ;;\n  *)\n    echo 'Unknown environment, defaulting to development'\n    ENV_VALUE=\"development\"\n    ;;\nesac\n\necho \"$ENV_VALUE\"",
+      "executor": {
+        "type": "command",
+        "config": {}
+      },
+      "depends": [\n        \"validate-incident\"\n      ],
+      "output": "parsed_environment"
+    },
+    {
       "name": "normalize-channel-name",
       "description": "Normalize the channel name by replacing spaces with underscores and converting to lower case",
-      "command": "if [ \"${normalize_channel_name:-true}\" = \"true\" ]; then\n  # Replace spaces with underscores, then convert to lower case\n  echo \"${slack_channel_id}\" | sed 's/ /_/g' | tr '[:upper:]' '[:lower:]'\nelse\n  # Only convert to lower case\n  echo \"${slack_channel_id}\" | tr '[:upper:]' '[:lower:]'\nfi\n",
+      "command": "echo '📝 NORMALIZING SLACK CHANNEL NAME'\necho 'Original: ${slack_channel_id}'\n\n# Normalize channel name for Slack compatibility\nNORMALIZED=\"${slack_channel_id}\"\n\n# Replace spaces with underscores\nNORMALIZED=$(echo \"$NORMALIZED\" | sed 's/ /_/g')\n\n# Replace special characters with underscores\nNORMALIZED=$(echo \"$NORMALIZED\" | sed 's/[^a-zA-Z0-9_#-]/_/g')\n\n# Remove multiple consecutive underscores\nNORMALIZED=$(echo \"$NORMALIZED\" | sed 's/__*/_/g')\n\n# Convert to lowercase\nNORMALIZED=$(echo \"$NORMALIZED\" | tr '[:upper:]' '[:lower:]')\n\n# Remove trailing underscores\nNORMALIZED=$(echo \"$NORMALIZED\" | sed 's/_$//')\n\necho \"Normalized: $NORMALIZED\"\necho \"$NORMALIZED\"",
       "depends": [
         "validate-incident"
       ],
@@ -74,7 +85,7 @@
     {
       "name": "debug-slack-token",
       "description": "Debug Slack token availability",
-      "command": "echo 'DEBUG: Slack Integration Status'\necho 'SLACK_TOKEN VALUE:' ${slack_token}\necho 'SLACK_TOKEN LENGTH:' ${#slack_token}\necho 'SLACK_TOKEN TYPE:' $(echo ${slack_token} | head -c 20)\necho 'NORMALIZED_CHANNEL:' ${NORMALIZED_CHANNEL_NAME}\nif [ -z \"${slack_token}\" ]; then echo 'TOKEN IS EMPTY'; else echo 'TOKEN EXISTS'; fi\nif [ \"${slack_token}\" = \"null\" ]; then echo 'TOKEN IS NULL'; else echo 'TOKEN IS NOT NULL'; fi",
+      "command": "echo '🔍 SLACK INTEGRATION DEBUG'\necho '========================'\necho 'SLACK_TOKEN: '${slack_token}\necho 'NORMALIZED_CHANNEL: '${NORMALIZED_CHANNEL_NAME}\necho 'ORIGINAL_CHANNEL: '${slack_channel_id}\necho 'INCIDENT_ID: '${incident_id}\necho 'INCIDENT_TITLE: '${incident_title}\necho 'ENVIRONMENT: '${environment}\necho ''\necho 'TOKEN VALIDATION:'\nif [ -z \"${slack_token}\" ]; then echo '❌ TOKEN IS EMPTY'; else echo '✅ TOKEN EXISTS'; fi\nif [ \"${slack_token}\" = \"null\" ]; then echo '❌ TOKEN IS NULL'; else echo '✅ TOKEN IS NOT NULL'; fi\nif [ -z \"${NORMALIZED_CHANNEL_NAME}\" ]; then echo '❌ CHANNEL NAME IS EMPTY'; else echo '✅ CHANNEL NAME EXISTS'; fi\necho ''\necho 'READY FOR SLACK POSTING'",
       "executor": {
         "type": "command",
         "config": {}
@@ -128,13 +139,14 @@
     },
     {
       "name": "notify-investigation-progress",
-      "command": "echo 'INVESTIGATION PROGRESS - ONLY POST WHEN AGENTS START'\necho '==================================================='\n\n# Only post if at least one investigation step actually started\necho \"Environment is: ${environment}\"\ncase \"${environment}\" in\n  \"na-production\"|\"development\")\n    echo 'NA investigation environment detected'\n    ;;\n  \"eu-production\")\n    echo 'EU investigation environment detected'\n    ;;\n  \"na-integration\")\n    echo 'NA-INT investigation environment detected'\n    ;;\n  *)\n    echo \"Unknown environment: ${environment}, skipping progress notification\"\n    exit 0\n    ;;\nesac\n\n# Check if we have Slack token\nif [ -z \"${slack_token}\" ] || [ \"${slack_token}\" = \"null\" ] || [ \"${slack_token}\" = \"\" ]; then\n  echo 'No Slack token available - skipping progress notification'\n  exit 0\nfi\n\necho \"Posting to channel: ${NORMALIZED_CHANNEL_NAME}\"\n\n# Simple progress message\nPAYLOAD='{\"channel\":\"'${NORMALIZED_CHANNEL_NAME}'\",\"text\":\"🔍 AI Investigation Started\",\"blocks\":[{\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\"🔍 *AI Investigation Started*\\n'${incident_title}'\"}}]}'\n\necho 'Posting progress to Slack...'\nRESPONSE=$(curl -s -X POST https://slack.com/api/chat.postMessage \\\n  -H \"Authorization: Bearer ${slack_token.token}\" \\\n  -H \"Content-Type: application/json\" \\\n  -d \"${PAYLOAD}\")\n\necho \"Slack Response: ${RESPONSE}\"\n\nif echo \"${RESPONSE}\" | grep -q '\"ok\":true'; then\n  echo 'Investigation progress posted to Slack'\nelse\n  echo 'Investigation progress posting failed'\nfi",
+      "command": "echo 'INVESTIGATION PROGRESS - ONLY POST WHEN AGENTS START'\necho '==================================================='\n\n# Only post if at least one investigation step actually started\necho \"Environment is: ${parsed_environment}\"\ncase \"${parsed_environment}\" in\n  \"na-production\"|\"development\")\n    echo 'NA investigation environment detected'\n    ;;\n  \"eu-production\")\n    echo 'EU investigation environment detected'\n    ;;\n  \"na-integration\")\n    echo 'NA-INT investigation environment detected'\n    ;;\n  *)\n    echo \"Unknown environment: ${parsed_environment}, skipping progress notification\"\n    exit 0\n    ;;\nesac\n\n# Check if we have Slack token\nif [ -z \"${slack_token}\" ] || [ \"${slack_token}\" = \"null\" ] || [ \"${slack_token}\" = \"\" ]; then\n  echo 'No Slack token available - skipping progress notification'\n  exit 0\nfi\n\necho \"Posting to channel: ${NORMALIZED_CHANNEL_NAME}\"\n\n# Simple progress message\nPAYLOAD='{\"channel\":\"'${NORMALIZED_CHANNEL_NAME}'\",\"text\":\"🔍 AI Investigation Started\",\"blocks\":[{\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\"🔍 *AI Investigation Started*\\n'${incident_title}'\"}}]}'\n\necho 'Posting progress to Slack...'\nRESPONSE=$(curl -s -X POST https://slack.com/api/chat.postMessage \\\n  -H \"Authorization: Bearer ${slack_token.token}\" \\\n  -H \"Content-Type: application/json\" \\\n  -d \"${PAYLOAD}\")\n\necho \"Slack Response: ${RESPONSE}\"\n\nif echo \"${RESPONSE}\" | grep -q '\"ok\":true'; then\n  echo 'Investigation progress posted to Slack'\nelse\n  echo 'Investigation progress posting failed'\nfi",
       "description": "Post investigation progress update AFTER agents start",
       "executor": {
         "type": "command",
         "config": {}
       },
       "depends": [
+        "parse-environment-from-tags",
         "investigate-cluster-health-na-prod",
         "investigate-cluster-health-na-dev",
         "investigate-cluster-health-eu", 
@@ -169,11 +181,12 @@
         }
       },
       "depends": [
+        "parse-environment-from-tags",
         "prepare-investigation-instructions"
       ],
       "preconditions": [
         {
-          "condition": "${environment}",
+          "condition": "${parsed_environment}",
           "expected": "na-production"
         }
       ],
@@ -193,11 +206,12 @@
         }
       },
       "depends": [
+        "parse-environment-from-tags",
         "prepare-investigation-instructions"
       ],
       "preconditions": [
         {
-          "condition": "${environment}",
+          "condition": "${parsed_environment}",
           "expected": "development"
         }
       ],
@@ -217,11 +231,12 @@
         }
       },
       "depends": [
+        "parse-environment-from-tags",
         "prepare-investigation-instructions"
       ],
       "preconditions": [
         {
-          "condition": "${environment}",
+          "condition": "${parsed_environment}",
           "expected": "eu-production"
         }
       ],
@@ -241,11 +256,12 @@
         }
       },
       "depends": [
+        "parse-environment-from-tags",
         "prepare-investigation-instructions"
       ],
       "preconditions": [
         {
-          "condition": "${environment}",
+          "condition": "${parsed_environment}",
           "expected": "na-integration"
         }
       ],
@@ -269,7 +285,7 @@
       ],
       "preconditions": [
         {
-          "condition": "${environment}",
+          "condition": "${parsed_environment}",
           "expected": "na-production"
         }
       ],
@@ -293,7 +309,7 @@
       ],
       "preconditions": [
         {
-          "condition": "${environment}",
+          "condition": "${parsed_environment}",
           "expected": "development"
         }
       ],
@@ -317,7 +333,7 @@
       ],
       "preconditions": [
         {
-          "condition": "${environment}",
+          "condition": "${parsed_environment}",
           "expected": "eu-production"
         }
       ],
@@ -341,7 +357,7 @@
       ],
       "preconditions": [
         {
-          "condition": "${environment}",
+          "condition": "${parsed_environment}",
           "expected": "na-integration"
         }
       ],
@@ -358,7 +374,7 @@
       ],
       "preconditions": [
         {
-          "condition": "${environment}",
+          "condition": "${parsed_environment}",
           "expected": "na-production"
         }
       ],
@@ -380,7 +396,7 @@
       ],
       "preconditions": [
         {
-          "condition": "${environment}",
+          "condition": "${parsed_environment}",
           "expected": "eu-production"
         }
       ],
@@ -402,7 +418,7 @@
       ],
       "preconditions": [
         {
-          "condition": "${environment}",
+          "condition": "${parsed_environment}",
           "expected": "na-integration"
         }
       ],
@@ -424,7 +440,7 @@
       ],
       "preconditions": [
         {
-          "condition": "${environment}",
+          "condition": "${parsed_environment}",
           "expected": "development"
         }
       ],
