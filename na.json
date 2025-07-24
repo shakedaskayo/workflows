@@ -43,15 +43,17 @@
       "output": "validation_status"
     },
     {
-      "name": "parse-environment-from-tags",
-      "description": "Extract environment from Datadog tags",
-      "command": "echo '🏷️ PARSING ENVIRONMENT FROM DATADOG TAGS'\necho '========================================'\necho 'Raw tags from Datadog: ${environment}'\necho ''\n\n# Parse Environment tag from comma-separated list\n# Tags format: \"monitor, name:myService, role:computing-node, Environment:production\"\nENV_VALUE=\"\"\n\n# Convert to lowercase for case-insensitive matching\nTAGS_LOWER=$(echo \"${environment}\" | tr '[:upper:]' '[:lower:]')\necho 'Tags (lowercase): '\"$TAGS_LOWER\"\n\n# Extract environment value using different possible formats\nif echo \"$TAGS_LOWER\" | grep -q \"environment:\"; then\n  # Format: Environment:production\n  ENV_VALUE=$(echo \"$TAGS_LOWER\" | grep -o \"environment:[^,]*\" | cut -d: -f2 | tr -d ' ')\nelif echo \"$TAGS_LOWER\" | grep -q \"env:\"; then\n  # Format: env:production  \n  ENV_VALUE=$(echo \"$TAGS_LOWER\" | grep -o \"env:[^,]*\" | cut -d: -f2 | tr -d ' ')\nelse\n  echo '⚠️ No Environment or env tag found in tags'\n  # Default fallback\n  ENV_VALUE=\"development\"\nfi\n\n# Clean up the value\nENV_VALUE=$(echo \"$ENV_VALUE\" | tr -d '\"' | tr -d \"'\" | xargs)\n\necho 'Extracted environment: '\"$ENV_VALUE\"\n\n# Validate and normalize environment values\ncase \"$ENV_VALUE\" in\n  \"production\"|\"prod\")\n    ENV_VALUE=\"na-production\"\n    echo 'Normalized to: na-production'\n    ;;\n  \"eu-production\"|\"eu-prod\")\n    ENV_VALUE=\"eu-production\"\n    echo 'Normalized to: eu-production'\n    ;;\n  \"integration\"|\"int\"|\"staging\")\n    ENV_VALUE=\"na-integration\"\n    echo 'Normalized to: na-integration'\n    ;;\n  \"development\"|\"dev\")\n    ENV_VALUE=\"development\"\n    echo 'Normalized to: development'\n    ;;\n  *)\n    echo 'Unknown environment, defaulting to development'\n    ENV_VALUE=\"development\"\n    ;;\nesac\n\necho \"$ENV_VALUE\"",
+      "name": "classify-incident-agent",
+      "description": "Classify the best agent based on incident text analysis",
+      "command": "echo '🤖 CLASSIFYING INCIDENT TO APPROPRIATE AGENT'\necho '=========================================='\necho 'Analyzing incident details:'\necho '  Title: ${incident_title}'\necho '  Body: ${incident_body}'\necho '  Tags: ${all_tags}'\necho '  Hostname: ${hostname}'\necho ''\n\n# Convert all text to lowercase for analysis\nTITLE_LOWER=$(echo \"${incident_title}\" | tr '[:upper:]' '[:lower:]')\nBODY_LOWER=$(echo \"${incident_body}\" | tr '[:upper:]' '[:lower:]')\nTAGS_LOWER=$(echo \"${all_tags}\" | tr '[:upper:]' '[:lower:]')\nHOSTNAME_LOWER=$(echo \"${hostname}\" | tr '[:upper:]' '[:lower:]')\n\n# Combine all text for analysis\nALL_TEXT=\"$TITLE_LOWER $BODY_LOWER $TAGS_LOWER $HOSTNAME_LOWER\"\n\necho 'Classification logic:'\necho '  Checking for EU indicators...'\n\n# Check for EU indicators\nif echo \"$ALL_TEXT\" | grep -E -q '(eu|europe|european|eu-|dublin|london|frankfurt|paris|amsterdam)'; then\n  AGENT=\"chatops-eu\"\n  echo '  ✅ EU indicators found -> chatops-eu'\nelif echo \"$ALL_TEXT\" | grep -E -q '(integration|staging|test|pre-prod|int-|stage-|dev-|qa)'; then\n  AGENT=\"chatops-na-integration\"\n  echo '  ✅ Integration/Staging indicators found -> chatops-na-integration'\nelse\n  AGENT=\"chatops-na\"\n  echo '  ✅ Default to NA production -> chatops-na'\nfi\n\necho ''\necho \"Final classification: $AGENT\"\necho \"$AGENT\"",
       "executor": {
         "type": "command",
         "config": {}
       },
-      "depends": [\n        \"validate-incident\"\n      ],
-      "output": "parsed_environment"
+      "depends": [
+        "validate-incident"
+      ],
+      "output": "classified_agent"
     },
     {
       "name": "normalize-channel-name",
@@ -139,18 +141,14 @@
     },
     {
       "name": "notify-investigation-progress",
-      "command": "echo 'INVESTIGATION PROGRESS - ONLY POST WHEN AGENTS START'\necho '==================================================='\n\n# Only post if at least one investigation step actually started\necho \"Environment is: ${parsed_environment}\"\ncase \"${parsed_environment}\" in\n  \"na-production\"|\"development\")\n    echo 'NA investigation environment detected'\n    ;;\n  \"eu-production\")\n    echo 'EU investigation environment detected'\n    ;;\n  \"na-integration\")\n    echo 'NA-INT investigation environment detected'\n    ;;\n  *)\n    echo \"Unknown environment: ${parsed_environment}, skipping progress notification\"\n    exit 0\n    ;;\nesac\n\n# Check if we have Slack token\nif [ -z \"${slack_token}\" ] || [ \"${slack_token}\" = \"null\" ] || [ \"${slack_token}\" = \"\" ]; then\n  echo 'No Slack token available - skipping progress notification'\n  exit 0\nfi\n\necho \"Posting to channel: ${NORMALIZED_CHANNEL_NAME}\"\n\n# Simple progress message\nPAYLOAD='{\"channel\":\"'${NORMALIZED_CHANNEL_NAME}'\",\"text\":\"🔍 AI Investigation Started\",\"blocks\":[{\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\"🔍 *AI Investigation Started*\\n'${incident_title}'\"}}]}'\n\necho 'Posting progress to Slack...'\nRESPONSE=$(curl -s -X POST https://slack.com/api/chat.postMessage \\\n  -H \"Authorization: Bearer ${slack_token.token}\" \\\n  -H \"Content-Type: application/json\" \\\n  -d \"${PAYLOAD}\")\n\necho \"Slack Response: ${RESPONSE}\"\n\nif echo \"${RESPONSE}\" | grep -q '\"ok\":true'; then\n  echo 'Investigation progress posted to Slack'\nelse\n  echo 'Investigation progress posting failed'\nfi",
+      "command": "echo 'INVESTIGATION PROGRESS - ONLY POST WHEN AGENTS START'\necho '==================================================='\n\n# Post progress notification for LLM-classified agent investigation\necho \"Classified agent: ${classified_agent}\"\necho 'Investigation starting with AI-selected agent'\n\n# Check if we have Slack token\nif [ -z \"${slack_token}\" ] || [ \"${slack_token}\" = \"null\" ] || [ \"${slack_token}\" = \"\" ]; then\n  echo 'No Slack token available - skipping progress notification'\n  exit 0\nfi\n\necho \"Posting to channel: ${NORMALIZED_CHANNEL_NAME}\"\n\n# Simple progress message\nPAYLOAD='{\"channel\":\"'${NORMALIZED_CHANNEL_NAME}'\",\"text\":\"🔍 AI Investigation Started\",\"blocks\":[{\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\"🔍 *AI Investigation Started*\\n'${incident_title}'\"}}]}'\n\necho 'Posting progress to Slack...'\nRESPONSE=$(curl -s -X POST https://slack.com/api/chat.postMessage \\\n  -H \"Authorization: Bearer ${slack_token.token}\" \\\n  -H \"Content-Type: application/json\" \\\n  -d \"${PAYLOAD}\")\n\necho \"Slack Response: ${RESPONSE}\"\n\nif echo \"${RESPONSE}\" | grep -q '\"ok\":true'; then\n  echo 'Investigation progress posted to Slack'\nelse\n  echo 'Investigation progress posting failed'\nfi",
       "description": "Post investigation progress update AFTER agents start",
       "executor": {
         "type": "command",
         "config": {}
       },
       "depends": [
-        "parse-environment-from-tags",
-        "investigate-cluster-health-na-prod",
-        "investigate-cluster-health-na-dev",
-        "investigate-cluster-health-eu", 
-        "investigate-cluster-health-na-int"
+        "investigate-cluster-health"
       ],
       "output": "investigation_progress_message",
       "continueOn": {
@@ -171,24 +169,19 @@
       "output": "investigation_instructions"
     },
     {
-      "name": "investigate-cluster-health-na-prod",
-      "description": "AI-powered incident investigation for NA production",
+      "name": "investigate-cluster-health",
+      "description": "AI-powered incident investigation using LLM-classified agent",
       "executor": {
         "type": "agent",
         "config": {
-          "agent_name": "chatops-na",
+          "agent_name": "${classified_agent}",
+          "model": "gpt-4o",
           "message": "Production Incident Investigation Required. Alert ID: ${alert_id}. Status: ${alert_status}. Priority: ${alert_priority}. Incident: ${incident_body}. Environment: ${environment}. All Tags: ${all_tags}. Hostname: ${hostname}. Please conduct thorough investigation including cluster health, pod status, logs analysis, and provide root cause with remediation steps."
         }
       },
       "depends": [
-        "parse-environment-from-tags",
+        "classify-incident-agent",
         "prepare-investigation-instructions"
-      ],
-      "preconditions": [
-        {
-          "condition": "${parsed_environment}",
-          "expected": "na-production"
-        }
       ],
       "output": "cluster_results",
       "continueOn": {
@@ -196,98 +189,18 @@
       }
     },
     {
-      "name": "investigate-cluster-health-na-dev",
-      "description": "AI-powered incident investigation for development environment",
+      "name": "create-executive-summary",
+      "description": "Create executive summary using LLM-classified agent",
       "executor": {
         "type": "agent",
         "config": {
-          "agent_name": "chatops-na",
-          "message": "Development Environment Investigation Required. Alert ID: ${alert_id}. Status: ${alert_status}. Priority: ${alert_priority}. Incident: ${incident_body}. Environment: ${environment}. All Tags: ${all_tags}. Hostname: ${hostname}. Please conduct thorough investigation including cluster health, pod status, logs analysis, and provide root cause with remediation steps."
-        }
-      },
-      "depends": [
-        "parse-environment-from-tags",
-        "prepare-investigation-instructions"
-      ],
-      "preconditions": [
-        {
-          "condition": "${parsed_environment}",
-          "expected": "development"
-        }
-      ],
-      "output": "cluster_results",
-      "continueOn": {
-        "failure": true
-      }
-    },
-    {
-      "name": "investigate-cluster-health-eu",
-      "description": "AI-powered incident investigation for EU production",
-      "executor": {
-        "type": "agent",
-        "config": {
-          "agent_name": "chatops-eu",
-          "message": "Production Incident Investigation Required. Alert ID: ${alert_id}. Status: ${alert_status}. Priority: ${alert_priority}. Incident: ${incident_body}. Environment: ${environment}. All Tags: ${all_tags}. Hostname: ${hostname}. Please conduct thorough investigation including cluster health, pod status, logs analysis, and provide root cause with remediation steps."
-        }
-      },
-      "depends": [
-        "parse-environment-from-tags",
-        "prepare-investigation-instructions"
-      ],
-      "preconditions": [
-        {
-          "condition": "${parsed_environment}",
-          "expected": "eu-production"
-        }
-      ],
-      "output": "cluster_results",
-      "continueOn": {
-        "failure": true
-      }
-    },
-    {
-      "name": "investigate-cluster-health-na-int",
-      "description": "AI-powered incident investigation for NA integration",
-      "executor": {
-        "type": "agent",
-        "config": {
-          "agent_name": "chatops-na-integration",
-          "message": "Production Incident Investigation Required. Alert ID: ${alert_id}. Status: ${alert_status}. Priority: ${alert_priority}. Incident: ${incident_body}. Environment: ${environment}. All Tags: ${all_tags}. Hostname: ${hostname}. Please conduct thorough investigation including cluster health, pod status, logs analysis, and provide root cause with remediation steps."
-        }
-      },
-      "depends": [
-        "parse-environment-from-tags",
-        "prepare-investigation-instructions"
-      ],
-      "preconditions": [
-        {
-          "condition": "${parsed_environment}",
-          "expected": "na-integration"
-        }
-      ],
-      "output": "cluster_results",
-      "continueOn": {
-        "failure": true
-      }
-    },
-    {
-      "name": "create-executive-summary-na",
-      "description": "Create executive summary for NA production investigation",
-      "executor": {
-        "type": "agent",
-        "config": {
-          "agent_name": "chatops-na",
+          "agent_name": "${classified_agent}",
+          "model": "gpt-4o",
           "message": "Create Executive Summary. Alert ID: ${alert_id}. Incident: ${incident_body}. Environment: ${environment}. Tags: ${all_tags}. Investigation Results: ${cluster_results}. Based on these investigation results, provide comprehensive executive summary including incident overview, key findings, root cause analysis, impact assessment, and recommended actions for stakeholders."
         }
       },
       "depends": [
-        "investigate-cluster-health-na-prod"
-      ],
-      "preconditions": [
-        {
-          "condition": "${parsed_environment}",
-          "expected": "na-production"
-        }
+        "investigate-cluster-health"
       ],
       "output": "executive_summary",
       "continueOn": {
@@ -295,160 +208,16 @@
       }
     },
     {
-      "name": "create-executive-summary-na-dev",
-      "description": "Create executive summary for development environment investigation",
-      "executor": {
-        "type": "agent",
-        "config": {
-          "agent_name": "chatops-na",
-          "message": "Create Executive Summary. Alert ID: ${alert_id}. Incident: ${incident_body}. Environment: ${environment}. Tags: ${all_tags}. Investigation Results: ${cluster_results}. Based on these investigation results, provide comprehensive executive summary including incident overview, key findings, root cause analysis, impact assessment, and recommended actions for stakeholders."
-        }
-      },
+      "name": "post-investigation-summary",
+      "description": "Post investigation summary to Slack",
       "depends": [
-        "investigate-cluster-health-na-dev"
-      ],
-      "preconditions": [
-        {
-          "condition": "${parsed_environment}",
-          "expected": "development"
-        }
-      ],
-      "output": "executive_summary",
-      "continueOn": {
-        "failure": true
-      }
-    },
-    {
-      "name": "create-executive-summary-eu",
-      "description": "Create executive summary for EU production investigation",
-      "executor": {
-        "type": "agent",
-        "config": {
-          "agent_name": "chatops-eu",
-          "message": "Create Executive Summary. Alert ID: ${alert_id}. Incident: ${incident_body}. Environment: ${environment}. Tags: ${all_tags}. Investigation Results: ${cluster_results}. Based on these investigation results, provide comprehensive executive summary including incident overview, key findings, root cause analysis, impact assessment, and recommended actions for stakeholders."
-        }
-      },
-      "depends": [
-        "investigate-cluster-health-eu"
-      ],
-      "preconditions": [
-        {
-          "condition": "${parsed_environment}",
-          "expected": "eu-production"
-        }
-      ],
-      "output": "executive_summary",
-      "continueOn": {
-        "failure": true
-      }
-    },
-    {
-      "name": "create-executive-summary-na-int",
-      "description": "Create executive summary for NA integration investigation",
-      "executor": {
-        "type": "agent",
-        "config": {
-          "agent_name": "chatops-na-integration",
-          "message": "Create Executive Summary. Alert ID: ${alert_id}. Incident: ${incident_body}. Environment: ${environment}. Tags: ${all_tags}. Investigation Results: ${cluster_results}. Based on these investigation results, provide comprehensive executive summary including incident overview, key findings, root cause analysis, impact assessment, and recommended actions for stakeholders."
-        }
-      },
-      "depends": [
-        "investigate-cluster-health-na-int"
-      ],
-      "preconditions": [
-        {
-          "condition": "${parsed_environment}",
-          "expected": "na-integration"
-        }
-      ],
-      "output": "executive_summary",
-      "continueOn": {
-        "failure": true
-      }
-    },
-    {
-      "name": "post-investigation-summary-na",
-      "description": "Post investigation summary to Slack for NA environments",
-      "depends": [
-        "create-executive-summary-na"
-      ],
-      "preconditions": [
-        {
-          "condition": "${parsed_environment}",
-          "expected": "na-production"
-        }
+        "create-executive-summary"
       ],
       "executor": {
         "type": "command",
         "config": {}
       },
-      "command": "echo '📋 POSTING INVESTIGATION SUMMARY TO SLACK' && echo '=======================================' && if [ -z '${slack_token}' ] || [ '${slack_token}' = 'null' ]; then echo '⚠️ No Slack token available - skipping summary post' && echo '✅ Summary post skipped (no Slack integration)' && exit 0; fi && SEVERITY_EMOJI='' && case '${incident_severity}' in critical) SEVERITY_EMOJI='🔴' ;; high) SEVERITY_EMOJI='🟠' ;; medium) SEVERITY_EMOJI='🟡' ;; low) SEVERITY_EMOJI='🟢' ;; *) SEVERITY_EMOJI='⚪' ;; esac && cat > /tmp/slack_payload.json << EOF\n{\n  \"channel\": \"${NORMALIZED_CHANNEL_NAME}\",\n  \"text\": \"✅ AI Investigation Complete\",\n  \"blocks\": [\n    {\n      \"type\": \"header\",\n      \"text\": {\n        \"type\": \"plain_text\",\n        \"text\": \"🚨 INCIDENT INVESTIGATION COMPLETE\",\n        \"emoji\": true\n      }\n    },\n    {\n      \"type\": \"section\",\n      \"fields\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Alert ID:* ${alert_id}\"\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Status:* ${alert_status}\"\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Priority:* ${alert_priority}\"\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Environment:* ${environment}\"\n        }\n      ]\n    },\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \"*🔍 Investigation Summary:*\\n${executive_summary}\"\n      }\n    },\n    {\n      \"type\": \"divider\"\n    },\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \"*📊 Full Investigation Results:*\\n${cluster_results}\"\n      }\n    },\n    {\n      \"type\": \"divider\"\n    },\n    {\n      \"type\": \"actions\",\n      \"elements\": [\n        {\n          \"type\": \"button\",\n          \"text\": {\n            \"type\": \"plain_text\",\n            \"text\": \"🔗 View Datadog Alert\",\n            \"emoji\": true\n          },\n          \"url\": \"${incident_url}\",\n          \"style\": \"primary\"\n        },\n        {\n          \"type\": \"button\",\n          \"text\": {\n            \"type\": \"plain_text\",\n            \"text\": \"📋 Follow Up Investigation\",\n            \"emoji\": true\n          },\n          \"value\": \"investigate_further\",\n          \"action_id\": \"investigate_further\"\n        }\n      ]\n    }\n  ]\n}\nEOF\necho 'Posting enhanced summary to Slack...' && curl -s -X POST https://slack.com/api/chat.postMessage -H 'Authorization: Bearer ${slack_token}' -H 'Content-Type: application/json' -d @/tmp/slack_payload.json && echo '✅ Investigation summary posted successfully to Slack!'",
-      "output": "summary_post_status",
-      "continueOn": {
-        "failure": true
-      }
-    },
-    {
-      "name": "post-investigation-summary-eu",
-      "description": "Post investigation summary to Slack for EU environment",
-      "depends": [
-        "create-executive-summary-eu"
-      ],
-      "preconditions": [
-        {
-          "condition": "${parsed_environment}",
-          "expected": "eu-production"
-        }
-      ],
-      "executor": {
-        "type": "command",
-        "config": {}
-      },
-      "command": "echo '📋 POSTING INVESTIGATION SUMMARY TO SLACK' && echo '=======================================' && if [ -z '${slack_token}' ] || [ '${slack_token}' = 'null' ]; then echo '⚠️ No Slack token available - skipping summary post' && echo '✅ Summary post skipped (no Slack integration)' && exit 0; fi && SEVERITY_EMOJI='' && case '${incident_severity}' in critical) SEVERITY_EMOJI='🔴' ;; high) SEVERITY_EMOJI='🟠' ;; medium) SEVERITY_EMOJI='🟡' ;; low) SEVERITY_EMOJI='🟢' ;; *) SEVERITY_EMOJI='⚪' ;; esac && cat > /tmp/slack_payload.json << EOF\n{\n  \"channel\": \"${NORMALIZED_CHANNEL_NAME}\",\n  \"text\": \"✅ AI Investigation Complete\",\n  \"blocks\": [\n    {\n      \"type\": \"header\",\n      \"text\": {\n        \"type\": \"plain_text\",\n        \"text\": \"🚨 INCIDENT INVESTIGATION COMPLETE\",\n        \"emoji\": true\n      }\n    },\n    {\n      \"type\": \"section\",\n      \"fields\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Alert ID:* ${alert_id}\"\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Status:* ${alert_status}\"\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Priority:* ${alert_priority}\"\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Environment:* ${environment}\"\n        }\n      ]\n    },\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \"*🔍 Investigation Summary:*\\n${executive_summary}\"\n      }\n    },\n    {\n      \"type\": \"divider\"\n    },\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \"*📊 Full Investigation Results:*\\n${cluster_results}\"\n      }\n    },\n    {\n      \"type\": \"divider\"\n    },\n    {\n      \"type\": \"actions\",\n      \"elements\": [\n        {\n          \"type\": \"button\",\n          \"text\": {\n            \"type\": \"plain_text\",\n            \"text\": \"🔗 View Datadog Alert\",\n            \"emoji\": true\n          },\n          \"url\": \"${incident_url}\",\n          \"style\": \"primary\"\n        },\n        {\n          \"type\": \"button\",\n          \"text\": {\n            \"type\": \"plain_text\",\n            \"text\": \"📋 Follow Up Investigation\",\n            \"emoji\": true\n          },\n          \"value\": \"investigate_further\",\n          \"action_id\": \"investigate_further\"\n        }\n      ]\n    }\n  ]\n}\nEOF\necho 'Posting enhanced summary to Slack...' && curl -s -X POST https://slack.com/api/chat.postMessage -H 'Authorization: Bearer ${slack_token}' -H 'Content-Type: application/json' -d @/tmp/slack_payload.json && echo '✅ Investigation summary posted successfully to Slack!'",
-      "output": "summary_post_status",
-      "continueOn": {
-        "failure": true
-      }
-    },
-    {
-      "name": "post-investigation-summary-na-int",
-      "description": "Post investigation summary to Slack for NA integration environment",
-      "depends": [
-        "create-executive-summary-na-int"
-      ],
-      "preconditions": [
-        {
-          "condition": "${parsed_environment}",
-          "expected": "na-integration"
-        }
-      ],
-      "executor": {
-        "type": "command",
-        "config": {}
-      },
-      "command": "echo '📋 POSTING INVESTIGATION SUMMARY TO SLACK' && echo '=======================================' && if [ -z '${slack_token}' ] || [ '${slack_token}' = 'null' ]; then echo '⚠️ No Slack token available - skipping summary post' && echo '✅ Summary post skipped (no Slack integration)' && exit 0; fi && SEVERITY_EMOJI='' && case '${incident_severity}' in critical) SEVERITY_EMOJI='🔴' ;; high) SEVERITY_EMOJI='🟠' ;; medium) SEVERITY_EMOJI='🟡' ;; low) SEVERITY_EMOJI='🟢' ;; *) SEVERITY_EMOJI='⚪' ;; esac && cat > /tmp/slack_payload.json << EOF\n{\n  \"channel\": \"${NORMALIZED_CHANNEL_NAME}\",\n  \"text\": \"✅ AI Investigation Complete\",\n  \"blocks\": [\n    {\n      \"type\": \"header\",\n      \"text\": {\n        \"type\": \"plain_text\",\n        \"text\": \"🚨 INCIDENT INVESTIGATION COMPLETE\",\n        \"emoji\": true\n      }\n    },\n    {\n      \"type\": \"section\",\n      \"fields\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Alert ID:* ${alert_id}\"\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Status:* ${alert_status}\"\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Priority:* ${alert_priority}\"\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Environment:* ${environment}\"\n        }\n      ]\n    },\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \"*🔍 Investigation Summary:*\\n${executive_summary}\"\n      }\n    },\n    {\n      \"type\": \"divider\"\n    },\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \"*📊 Full Investigation Results:*\\n${cluster_results}\"\n      }\n    },\n    {\n      \"type\": \"divider\"\n    },\n    {\n      \"type\": \"actions\",\n      \"elements\": [\n        {\n          \"type\": \"button\",\n          \"text\": {\n            \"type\": \"plain_text\",\n            \"text\": \"🔗 View Datadog Alert\",\n            \"emoji\": true\n          },\n          \"url\": \"${incident_url}\",\n          \"style\": \"primary\"\n        },\n        {\n          \"type\": \"button\",\n          \"text\": {\n            \"type\": \"plain_text\",\n            \"text\": \"📋 Follow Up Investigation\",\n            \"emoji\": true\n          },\n          \"value\": \"investigate_further\",\n          \"action_id\": \"investigate_further\"\n        }\n      ]\n    }\n  ]\n}\nEOF\necho 'Posting enhanced summary to Slack...' && curl -s -X POST https://slack.com/api/chat.postMessage -H 'Authorization: Bearer ${slack_token}' -H 'Content-Type: application/json' -d @/tmp/slack_payload.json && echo '✅ Investigation summary posted successfully to Slack!'",
-      "output": "summary_post_status",
-      "continueOn": {
-        "failure": true
-      }
-    },
-    {
-      "name": "post-investigation-summary-na-dev",
-      "description": "Post investigation summary to Slack for development environment",
-      "depends": [
-        "create-executive-summary-na-dev"
-      ],
-      "preconditions": [
-        {
-          "condition": "${parsed_environment}",
-          "expected": "development"
-        }
-      ],
-      "executor": {
-        "type": "command",
-        "config": {}
-      },
-      "command": "echo '📋 POSTING INVESTIGATION SUMMARY TO SLACK' && echo '=======================================' && if [ -z '${slack_token}' ] || [ '${slack_token}' = 'null' ]; then echo '⚠️ No Slack token available - skipping summary post' && echo '✅ Summary post skipped (no Slack integration)' && exit 0; fi && SEVERITY_EMOJI='' && case '${incident_severity}' in critical) SEVERITY_EMOJI='🔴' ;; high) SEVERITY_EMOJI='🟠' ;; medium) SEVERITY_EMOJI='🟡' ;; low) SEVERITY_EMOJI='🟢' ;; *) SEVERITY_EMOJI='⚪' ;; esac && cat > /tmp/slack_payload.json << EOF\\n{\\n  \\\"channel\\\": \\\"${NORMALIZED_CHANNEL_NAME}\\\",\\n  \\\"text\\\": \\\"✅ AI Investigation Complete\\\",\\n  \\\"blocks\\\": [\\n    {\\n      \\\"type\\\": \\\"header\\\",\\n      \\\"text\\\": {\\n        \\\"type\\\": \\\"plain_text\\\",\\n        \\\"text\\\": \\\"🚨 INCIDENT INVESTIGATION COMPLETE\\\",\\n        \\\"emoji\\\": true\\n      }\\n    },\\n    {\\n      \\\"type\\\": \\\"section\\\",\\n      \\\"fields\\\": [\\n        {\\n          \\\"type\\\": \\\"mrkdwn\\\",\\n          \\\"text\\\": \\\"*Alert ID:* ${alert_id}\\\"\\n        },\\n        {\\n          \\\"type\\\": \\\"mrkdwn\\\",\\n          \\\"text\\\": \\\"*Status:* ${alert_status}\\\"\\n        },\\n        {\\n          \\\"type\\\": \\\"mrkdwn\\\",\\n          \\\"text\\\": \\\"*Priority:* ${alert_priority}\\\"\\n        },\\n        {\\n          \\\"type\\\": \\\"mrkdwn\\\",\\n          \\\"text\\\": \\\"*Environment:* ${environment}\\\"\\n        }\\n      ]\\n    },\\n    {\\n      \\\"type\\\": \\\"section\\\",\\n      \\\"text\\\": {\\n        \\\"type\\\": \\\"mrkdwn\\\",\\n        \\\"text\\\": \\\"*🔍 Investigation Summary:*\\\\n${executive_summary}\\\"\\n      }\\n    },\\n    {\\n      \\\"type\\\": \\\"divider\\\"\\n    },\\n    {\\n      \\\"type\\\": \\\"section\\\",\\n      \\\"text\\\": {\\n        \\\"type\\\": \\\"mrkdwn\\\",\\n        \\\"text\\\": \\\"*📊 Full Investigation Results:*\\\\n${cluster_results}\\\"\\n      }\\n    },\\n    {\\n      \\\"type\\\": \\\"divider\\\"\\n    },\\n    {\\n      \\\"type\\\": \\\"actions\\\",\\n      \\\"elements\\\": [\\n        {\\n          \\\"type\\\": \\\"button\\\",\\n          \\\"text\\\": {\\n            \\\"type\\\": \\\"plain_text\\\",\\n            \\\"text\\\": \\\"🔗 View Datadog Alert\\\",\\n            \\\"emoji\\\": true\\n          },\\n          \\\"url\\\": \\\"${incident_url}\\\",\\n          \\\"style\\\": \\\"primary\\\"\\n        },\\n        {\\n          \\\"type\\\": \\\"button\\\",\\n          \\\"text\\\": {\\n            \\\"type\\\": \\\"plain_text\\\",\\n            \\\"text\\\": \\\"📋 Follow Up Investigation\\\",\\n            \\\"emoji\\\": true\\n          },\\n          \\\"value\\\": \\\"investigate_further\\\",\\n          \\\"action_id\\\": \\\"investigate_further\\\"\\n        }\\n      ]\\n    }\\n  ]\\n}\\nEOF\\necho 'Posting enhanced summary to Slack...' && curl -s -X POST https://slack.com/api/chat.postMessage -H 'Authorization: Bearer ${slack_token}' -H 'Content-Type: application/json' -d @/tmp/slack_payload.json && echo '✅ Investigation summary posted successfully to Slack!'",
+      "command": "echo '📋 POSTING INVESTIGATION SUMMARY TO SLACK' && echo '=======================================' && if [ -z '${slack_token}' ] || [ '${slack_token}' = 'null' ]; then echo '⚠️ No Slack token available - skipping summary post' && echo '✅ Summary post skipped (no Slack integration)' && exit 0; fi && SEVERITY_EMOJI='' && case '${incident_severity}' in critical) SEVERITY_EMOJI='🔴' ;; high) SEVERITY_EMOJI='🟠' ;; medium) SEVERITY_EMOJI='🟡' ;; low) SEVERITY_EMOJI='🟢' ;; *) SEVERITY_EMOJI='⚪' ;; esac && cat > /tmp/slack_payload.json << EOF\n{\n  \"channel\": \"${NORMALIZED_CHANNEL_NAME}\",\n  \"text\": \"✅ AI Investigation Complete\",\n  \"blocks\": [\n    {\n      \"type\": \"header\",\n      \"text\": {\n        \"type\": \"plain_text\",\n        \"text\": \"🚨 INCIDENT INVESTIGATION COMPLETE\",\n        \"emoji\": true\n      }\n    },\n    {\n      \"type\": \"section\",\n      \"fields\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Alert ID:* ${alert_id}\"\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Status:* ${alert_status}\"\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Agent Used:* ${classified_agent}\"\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Environment:* ${environment}\"\n        }\n      ]\n    },\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \"*🔍 Investigation Summary:*\\n${executive_summary}\"\n      }\n    },\n    {\n      \"type\": \"divider\"\n    },\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \"*📊 Full Investigation Results:*\\n${cluster_results}\"\n      }\n    },\n    {\n      \"type\": \"divider\"\n    },\n    {\n      \"type\": \"actions\",\n      \"elements\": [\n        {\n          \"type\": \"button\",\n          \"text\": {\n            \"type\": \"plain_text\",\n            \"text\": \"🔗 View Datadog Alert\",\n            \"emoji\": true\n          },\n          \"url\": \"${incident_url}\",\n          \"style\": \"primary\"\n        },\n        {\n          \"type\": \"button\",\n          \"text\": {\n            \"type\": \"plain_text\",\n            \"text\": \"📋 Follow Up Investigation\",\n            \"emoji\": true\n          },\n          \"value\": \"investigate_further\",\n          \"action_id\": \"investigate_further\"\n        }\n      ]\n    }\n  ]\n}\nEOF\necho 'Posting enhanced summary to Slack...' && curl -s -X POST https://slack.com/api/chat.postMessage -H 'Authorization: Bearer ${slack_token}' -H 'Content-Type: application/json' -d @/tmp/slack_payload.json && echo '✅ Investigation summary posted successfully to Slack!'",
       "output": "summary_post_status",
       "continueOn": {
         "failure": true
