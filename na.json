@@ -14,15 +14,8 @@
     "max_retries": "3",
     "customer_impact": "UNKNOWN",
     "affected_services": "NA",
-    "datadog_environment": "$TAGS[environment]",
     "dd_environment": "na",
-    "k8s_environment": "${agent_mapping.DYNAMIC_K8S_ENV}",
-    "agent_uuid": "${agent_mapping.DYNAMIC_AGENT_UUID}",
-    "normalize_channel_name": "true",
-    "region": "${agent_mapping.DYNAMIC_REGION}",
-    "region_name": "${agent_mapping.DYNAMIC_REGION_NAME}",
-    "region_emoji": "${agent_mapping.DYNAMIC_REGION_EMOJI}",
-    "investigation_agent_name": "${agent_mapping.DYNAMIC_AGENT_NAME}"
+    "normalize_channel_name": "true"
   },
   "env": {
     "KUBIYA_USER_EMAIL": "${KUBIYA_USER_EMAIL}",
@@ -34,60 +27,6 @@
   },
   "steps": [
     {
-      "name": "map-environment-to-agent",
-      "command": "echo \"🔄 MAPPING ENVIRONMENT TO AGENT\"\necho \"==============================\"\necho \"Datadog Environment: ${datadog_environment}\"\n\n# Map environment to agent configuration\ncase \"${datadog_environment}\" in\n  \"eu-production\")\n    AGENT_UUID=\"dd354944-fd6f-404c-bf67-090d7e8cfe60\"\n    AGENT_NAME=\"chatops-eu\"\n    REGION=\"EU\"\n    REGION_NAME=\"Europe\"\n    REGION_EMOJI=\"🇪🇺\"\n    K8S_ENV=\"p44-eu-prod\"\n    ;;\n  \"na-production\")\n    AGENT_UUID=\"9c6c370c-e289-411f-9c06-2cacc5d10153\"\n    AGENT_NAME=\"chatops-na\"\n    REGION=\"NA\"\n    REGION_NAME=\"North-America\"\n    REGION_EMOJI=\"🌎\"\n    K8S_ENV=\"p44-na-prod\"\n    ;;\n  \"na-integration\")\n    AGENT_UUID=\"20a1366f-4c82-4041-bd9d-29b635b98554\"\n    AGENT_NAME=\"chatops-na-integration\"\n    REGION=\"NA-INT\"\n    REGION_NAME=\"North-America-Integration\"\n    REGION_EMOJI=\"🧪\"\n    K8S_ENV=\"p44-na-integration\"\n    ;;\n  *)\n    echo \"⚠️ Unknown environment: ${datadog_environment}, defaulting to NA production\"\n    AGENT_UUID=\"9c6c370c-e289-411f-9c06-2cacc5d10153\"\n    AGENT_NAME=\"chatops-na\"\n    REGION=\"NA\"\n    REGION_NAME=\"North-America\"\n    REGION_EMOJI=\"🌎\"\n    K8S_ENV=\"p44-na-prod\"\n    ;;\nesac\n\necho \"Selected Configuration:\"\necho \"  Agent UUID: ${AGENT_UUID}\"\necho \"  Agent Name: ${AGENT_NAME}\"\necho \"  Region: ${REGION}\"\necho \"  Region Name: ${REGION_NAME}\"\necho \"  Region Emoji: ${REGION_EMOJI}\"\necho \"  K8s Environment: ${K8S_ENV}\"\necho \"✅ Environment mapping completed successfully\"\n\n# Export variables for use in subsequent steps\necho \"DYNAMIC_AGENT_UUID=${AGENT_UUID}\"\necho \"DYNAMIC_AGENT_NAME=${AGENT_NAME}\"\necho \"DYNAMIC_REGION=${REGION}\"\necho \"DYNAMIC_REGION_NAME=${REGION_NAME}\"\necho \"DYNAMIC_REGION_EMOJI=${REGION_EMOJI}\"\necho \"DYNAMIC_K8S_ENV=${K8S_ENV}\"\n",
-      "description": "Map Datadog environment to appropriate agent configuration",
-      "executor": {
-        "type": "command",
-        "config": {}
-      },
-      "output": "agent_mapping"
-    },
-    {
-      "name": "extract-agent-name",
-      "description": "Extract agent name from mapping output",
-      "executor": {
-        "type": "command",
-        "config": {}
-      },
-      "command": "echo \"${agent_mapping}\" | grep 'DYNAMIC_AGENT_NAME=' | cut -d'=' -f2",
-      "depends": ["map-environment-to-agent"],
-      "output": "agent_name"
-    },
-    {
-      "name": "extract-agent-uuid", 
-      "description": "Extract agent UUID from mapping output",
-      "executor": {
-        "type": "command",
-        "config": {}
-      },
-      "command": "echo \"${agent_mapping}\" | grep 'DYNAMIC_AGENT_UUID=' | cut -d'=' -f2",
-      "depends": ["map-environment-to-agent"],
-      "output": "agent_uuid"
-    },
-    {
-      "name": "extract-region-name",
-      "description": "Extract region name from mapping output", 
-      "executor": {
-        "type": "command",
-        "config": {}
-      },
-      "command": "echo \"${agent_mapping}\" | grep 'DYNAMIC_REGION_NAME=' | cut -d'=' -f2",
-      "depends": ["map-environment-to-agent"],
-      "output": "region_name"
-    },
-    {
-      "name": "extract-region-emoji",
-      "description": "Extract region emoji from mapping output",
-      "executor": {
-        "type": "command", 
-        "config": {}
-      },
-      "command": "echo \"${agent_mapping}\" | grep 'DYNAMIC_REGION_EMOJI=' | cut -d'=' -f2",
-      "depends": ["map-environment-to-agent"],
-      "output": "region_emoji"
-    },
-    {
       "name": "validate-incident",
       "command": "echo \"\ud83d\udd0d VALIDATING INCIDENT PARAMETERS\"\necho \"=================================\"\nVALIDATION_PASSED=true\nMISSING_PARAMS=\"\"\n\nif [ -z \"${incident_id}\" ]; then\n  echo \"\u274c ERROR: incident_id is required\"\n  VALIDATION_PASSED=false\n  MISSING_PARAMS=\"${MISSING_PARAMS} incident_id\"\nfi\n\nif [ -z \"${incident_title}\" ]; then\n  echo \"\u274c ERROR: incident_title is required\"\n  VALIDATION_PASSED=false\n  MISSING_PARAMS=\"${MISSING_PARAMS} incident_title\"\nfi\n\nif [ -z \"${incident_severity}\" ]; then\n  echo \"\u274c ERROR: incident_severity is required\"\n  VALIDATION_PASSED=false\n  MISSING_PARAMS=\"${MISSING_PARAMS} incident_severity\"\nfi\n\nif [ -z \"${affected_services}\" ]; then\n  echo \"\u26a0\ufe0f WARNING: affected_services not provided - will create validation agent\"\nfi\n\ncase \"${incident_severity}\" in\n  \"critical\"|\"high\"|\"medium\"|\"low\")\n    echo \"\u2705 Severity ${incident_severity} is valid\"\n    ;;\n  *)\n    echo \"\u274c ERROR: Invalid severity ${incident_severity}. Must be: critical, high, medium, or low\"\n    VALIDATION_PASSED=false\n    MISSING_PARAMS=\"${MISSING_PARAMS} valid_severity\"\n    ;;\nesac\n\nif [ \"$VALIDATION_PASSED\" = \"true\" ]; then\n  echo \"\ud83d\udccb INCIDENT METADATA:\"\n  echo \"  ID: ${incident_id}\"\n  echo \"  Title: ${incident_title}\"\n  echo \"  Severity: ${incident_severity}\"\n  echo \"  Priority: ${incident_priority}\"\n  echo \"  Owner: ${incident_owner}\"\n  echo \"  Source: ${incident_source}\"\n  echo \"  Affected Services: ${affected_services:-TBD via agent}\"\n  echo \"  Customer Impact: ${customer_impact}\"\n  echo \"\"\n  echo \"\u2705 Incident validation completed successfully\"\nelse\n  echo \"\u274c Validation failed. Missing parameters: ${MISSING_PARAMS}\"\n  echo \"\u26a0\ufe0f Continuing workflow to handle validation failure...\"\nfi\n",
       "description": "Validate incident parameters and prerequisites",
@@ -95,9 +34,7 @@
         "type": "command",
         "config": {}
       },
-      "depends": [
-        "extract-region-emoji"
-      ],
+      "depends": [],
       "output": "validation_status"
     },
     {
@@ -216,7 +153,7 @@
       "preconditions": {
         "conditions": [
           {
-            "field": "${datadog_environment}",
+            "field": "$TAGS[environment]",
             "operator": "equals",
             "value": "na-production"
           }
@@ -243,7 +180,7 @@
       "preconditions": {
         "conditions": [
           {
-            "field": "${datadog_environment}",
+            "field": "$TAGS[environment]",
             "operator": "equals",
             "value": "eu-production"
           }
@@ -270,7 +207,7 @@
       "preconditions": {
         "conditions": [
           {
-            "field": "${datadog_environment}",
+            "field": "$TAGS[environment]",
             "operator": "equals",
             "value": "na-integration"
           }
@@ -297,7 +234,7 @@
       "preconditions": {
         "conditions": [
           {
-            "field": "${datadog_environment}",
+            "field": "$TAGS[environment]",
             "operator": "equals",
             "value": "na-production"
           }
@@ -324,7 +261,7 @@
       "preconditions": {
         "conditions": [
           {
-            "field": "${datadog_environment}",
+            "field": "$TAGS[environment]",
             "operator": "equals",
             "value": "eu-production"
           }
@@ -351,7 +288,7 @@
       "preconditions": {
         "conditions": [
           {
-            "field": "${datadog_environment}",
+            "field": "$TAGS[environment]",
             "operator": "equals",
             "value": "na-integration"
           }
