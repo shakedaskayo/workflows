@@ -14,10 +14,10 @@
     "max_retries": "3",
     "customer_impact": "UNKNOWN",
     "affected_services": "NA",
-    "environment": "${environment}",
-    "alert_id": "${alert_id}",
-    "alert_status": "${alert_status}",
-    "alert_priority": "${alert_priority}",
+    "environment": "$TAGS[Env]",
+    "alert_id": "$ALERT_ID",
+    "alert_status": "$ALERT_STATUS", 
+    "alert_priority": "$ALERT_PRIORITY",
     "all_tags": "$TAGS",
     "hostname": "$HOSTNAME",
     "normalize_channel_name": "true"
@@ -144,7 +144,7 @@
     },
     {
       "name": "investigate-cluster-health-na",
-      "description": "AI-powered incident investigation for NA production",
+      "description": "AI-powered incident investigation for NA production and development",
       "executor": {
         "type": "agent",
         "config": {
@@ -159,8 +159,8 @@
         "conditions": [
           {
             "field": "${environment}",
-            "operator": "equals",
-            "value": "na-production"
+            "operator": "in",
+            "value": ["na-production", "development"]
           }
         ]
       },
@@ -225,7 +225,7 @@
     },
     {
       "name": "create-executive-summary-na",
-      "description": "Create executive summary for NA production investigation",
+      "description": "Create executive summary for NA production and development investigation",
       "executor": {
         "type": "agent",
         "config": {
@@ -240,8 +240,8 @@
         "conditions": [
           {
             "field": "${environment}",
-            "operator": "equals",
-            "value": "na-production"
+            "operator": "in",
+            "value": ["na-production", "development"]
           }
         ]
       },
