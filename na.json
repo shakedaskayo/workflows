@@ -5,22 +5,9 @@
     "incident_id": "$INCIDENT_PUBLIC_ID",
     "incident_title": "$INCIDENT_TITLE",
     "incident_severity": "$INCIDENT_SEVERITY",
-    "incident_priority": "High",
     "incident_body": "$INCIDENT_MSG",
     "incident_url": "$INCIDENT_URL",
-    "incident_source": "datadog",
-    "incident_owner": "devops",
-    "slack_channel_id": "#inc-$INCIDENT_PUBLIC_ID-$INCIDENT_TITLE",
-    "max_retries": "3",
-    "customer_impact": "UNKNOWN",
-    "affected_services": "NA",
-    "environment": "$TAGS",
-    "alert_id": "$ALERT_ID",
-    "alert_status": "$ALERT_STATUS", 
-    "alert_priority": "$ALERT_PRIORITY",
-    "all_tags": "$TAGS",
-    "hostname": "$HOSTNAME",
-    "normalize_channel_name": "true"
+    "slack_channel_id": "#inc-$INCIDENT_PUBLIC_ID-$INCIDENT_TITLE"
   },
   "env": {
     "KUBIYA_USER_EMAIL": "${KUBIYA_USER_EMAIL}",
@@ -50,7 +37,7 @@
         "config": {
           "agent_name": "chatops-na",
           "model": "gpt-4o",
-          "message": "Analyze this incident and classify which agent should handle it. Based on the incident details below, respond with ONLY one of these agent names: 'chatops-eu', 'chatops-na-integration', or 'chatops-na'. Rules: Use 'chatops-eu' if incident mentions EU/Europe/European regions, cities like Dublin/London/Frankfurt/Paris/Amsterdam, or EU-specific infrastructure. Use 'chatops-na-integration' if incident mentions integration/staging/test/pre-prod/dev/qa environments. Otherwise use 'chatops-na'. Incident Title: ${incident_title}. Incident Body: ${incident_body}. Tags: ${all_tags}. Hostname: ${hostname}. Respond with only the agent name."
+          "message": "Analyze this incident and classify which agent should handle it. Based on the incident details below, respond with ONLY one of these agent names: 'chatops-eu', 'chatops-na-integration', or 'chatops-na'. Rules: Use 'chatops-eu' if incident mentions EU/Europe/European regions, cities like Dublin/London/Frankfurt/Paris/Amsterdam, or EU-specific infrastructure. Use 'chatops-na-integration' if incident mentions integration/staging/test/pre-prod/dev/qa environments. Otherwise use 'chatops-na'. Incident Title: ${incident_title}. Incident Body: ${incident_body}. Respond with only the agent name."
         }
       },
       "depends": [
@@ -96,7 +83,7 @@
         "config": {}
       },
       "depends": [
-        "setup-slack-integration"
+        "normalize-channel-name"
       ],
       "output": "slack_debug_info"
     },
@@ -122,7 +109,7 @@
         "config": {}
       },
       "depends": [
-        "setup-slack-integration"
+        "normalize-channel-name"
       ],
       "output": "agent_context"
     },
@@ -167,7 +154,7 @@
       },
       "command": "cat << 'EOF'\n🚨 PRODUCTION INCIDENT INVESTIGATION - ${region_name}\n\n**INCIDENT DETAILS:**\n- **Public ID:** ${incident_id}\n- **Title:** ${incident_title}\n- **Severity:** ${incident_severity}\n- **Priority:** ${incident_priority}\n- **Customer Impact:** ${customer_impact}\n- **Affected Services:** ${affected_services}\n\n**INVESTIGATION CHECKLIST:**\n\n### 1. CLUSTER HEALTH & NODES\nkubectl get nodes -o wide\nkubectl describe nodes | grep -E \"Conditions|Capacity|Allocatable\"\nkubectl top nodes\nkubectl get events --sort-by='.lastTimestamp' | tail -20\n\n### 2. POD STATUS & HEALTH\nkubectl get pods --all-namespaces -o wide | grep -v Running | head -20\nkubectl get pods -n production -o wide | grep -E \"Error|CrashLoop|Pending|Failed\"\nkubectl describe pods -n production | grep -E \"Warning|Error|Failed\" | head -30\nkubectl top pods -n production --sort-by=cpu | head -10\n\n### 3. SERVICE DISCOVERY & NETWORKING\nkubectl get svc --all-namespaces\nkubectl get ingress --all-namespaces\nkubectl get endpoints --all-namespaces | grep -v \"<none>\"\nnslookup kubernetes.default.svc.cluster.local\n\n### 4. APPLICATION SPECIFIC CHECKS\nkubectl logs deployment/${affected_services} -n production --tail=50 | grep -E \"ERROR|WARN|FATAL|Exception\"\nkubectl describe deployment ${affected_services} -n production | grep -E \"Warning|Error|Failed|Ready\"\nkubectl get hpa,pdb -n production | grep ${affected_services}\nkubectl exec deployment/${affected_services} -n production -- curl -s localhost:8080/health | head -10\n\n### 5. RESOURCE UTILIZATION\nkubectl top pods -n production --containers\nkubectl describe limits -n production\nkubectl get pvc -n production -o wide\ndf -h\n\n**INVESTIGATION REQUEST:**\nPlease conduct a thorough investigation of this ${incident_severity} severity incident affecting ${affected_services}. Provide detailed analysis, root cause identification, and actionable remediation steps.\nEOF",
       "depends": [
-        "notify-investigation-progress"
+        "normalize-channel-name"
       ],
       "output": "investigation_instructions"
     },
@@ -179,7 +166,7 @@
         "config": {
           "agent_name": "${classified_agent}",
           "model": "gpt-4o",
-          "message": "Production Incident Investigation Required. Alert ID: ${alert_id}. Status: ${alert_status}. Priority: ${alert_priority}. Incident: ${incident_body}. Environment: ${environment}. All Tags: ${all_tags}. Hostname: ${hostname}. Please conduct thorough investigation including cluster health, pod status, logs analysis, and provide root cause with remediation steps."
+          "message": "Production Incident Investigation Required. Incident ID: ${incident_id}. Title: ${incident_title}. Severity: ${incident_severity}. Description: ${incident_body}. Please conduct thorough investigation including cluster health, pod status, logs analysis, and provide root cause with remediation steps."
         }
       },
       "depends": [
@@ -199,7 +186,7 @@
         "config": {
           "agent_name": "${classified_agent}",
           "model": "gpt-4o",
-          "message": "Create Executive Summary. Alert ID: ${alert_id}. Incident: ${incident_body}. Environment: ${environment}. Tags: ${all_tags}. Investigation Results: ${cluster_results}. Based on these investigation results, provide comprehensive executive summary including incident overview, key findings, root cause analysis, impact assessment, and recommended actions for stakeholders."
+          "message": "Create Executive Summary. Incident ID: ${incident_id}. Title: ${incident_title}. Severity: ${incident_severity}. Description: ${incident_body}. Investigation Results: ${cluster_results}. Based on these investigation results, provide comprehensive executive summary including incident overview, key findings, root cause analysis, impact assessment, and recommended actions for stakeholders."
         }
       },
       "depends": [
