@@ -72,6 +72,19 @@
       "output": "slack_token"
     },
     {
+      "name": "debug-slack-token",
+      "description": "Debug Slack token availability",
+      "command": "echo 'DEBUG: Slack Integration Status'\necho 'SLACK_TOKEN VALUE:' ${slack_token}\necho 'SLACK_TOKEN LENGTH:' ${#slack_token}\necho 'SLACK_TOKEN TYPE:' $(echo ${slack_token} | head -c 20)\necho 'NORMALIZED_CHANNEL:' ${NORMALIZED_CHANNEL_NAME}\nif [ -z \"${slack_token}\" ]; then echo 'TOKEN IS EMPTY'; else echo 'TOKEN EXISTS'; fi\nif [ \"${slack_token}\" = \"null\" ]; then echo 'TOKEN IS NULL'; else echo 'TOKEN IS NOT NULL'; fi",
+      "executor": {
+        "type": "command",
+        "config": {}
+      },
+      "depends": [
+        "setup-slack-integration"
+      ],
+      "output": "slack_debug_info"
+    },
+    {
       "name": "validation_failure_message",
       "command": "if [ \"$VALIDATION_PASSED\" != \"true\" ]; then\n  echo \"\u26a0\ufe0f VALIDATION FAILURE DETECTED: Creating support agent to help\"\n  echo \"Missing required parameters: ${MISSING_PARAMS}\"\n  echo \"Will create an intelligent agent to assist with parameter collection\"\nelse\n  echo \"\u2705 All required parameters present\"\nfi\n",
       "description": "Prepare validation failure message if parameters are missing",
@@ -80,7 +93,7 @@
         "config": {}
       },
       "depends": [
-        "setup-slack-integration"
+        "debug-slack-token"
       ],
       "output": "validation_failure_message"
     },
@@ -106,7 +119,7 @@
         "config": {}
       },
       "depends": [
-        "prepare-agent-context"
+        "debug-slack-token"
       ],
       "output": "initial_alert_message",
       "continueOn": {
@@ -115,14 +128,16 @@
     },
     {
       "name": "notify-investigation-progress",
-      "command": "echo \"\ud83d\udcca POSTING INVESTIGATION PROGRESS UPDATE\"\necho \"=======================================\"\n\n# Check if we have Slack token and only post if available\nif [ -z \"${slack_token}\" ] || [ \"${slack_token}\" = \"null\" ]; then\n  echo \"\u26a0\ufe0f No Slack token available - skipping progress notification\"\n  echo \"\u2705 Investigation progress notification skipped\"\n  exit 0\nfi\n\necho \"Posting to channel: ${NORMALIZED_CHANNEL_NAME}\"\n\nTIMEOUT_SECONDS=\"${investigation_timeout:-3600}\"\nTIMEOUT_MINUTES=$((TIMEOUT_SECONDS / 60))\n\nPAYLOAD=\"{\\\"channel\\\":\\\"${NORMALIZED_CHANNEL_NAME}\\\",\\\"text\\\":\\\"\ud83d\udd0d AI Investigation Started\\\",\\\"blocks\\\":[{\\\"type\\\":\\\"section\\\",\\\"text\\\":{\\\"type\\\":\\\"mrkdwn\\\",\\\"text\\\":\\\"\ud83d\udd0d *AI Investigation Started*\\\\n${incident_title}\\\"}},{\\\"type\\\":\\\"context\\\",\\\"elements\\\":[{\\\"type\\\":\\\"mrkdwn\\\",\\\"text\\\":\\\"ID: ${incident_id} | Severity: ${incident_severity} | Services: ${affected_services}\\\"}]},{\\\"type\\\":\\\"divider\\\"},{\\\"type\\\":\\\"section\\\",\\\"text\\\":{\\\"type\\\":\\\"mrkdwn\\\",\\\"text\\\":\\\"*${region_emoji} ${region} Agent*\\\\n\ud83d\udfe2 Analyzing ${region} Production cluster...\\\"}},{\\\"type\\\":\\\"context\\\",\\\"elements\\\":[{\\\"type\\\":\\\"mrkdwn\\\",\\\"text\\\":\\\"\u23f1\ufe0f ETA: ~${TIMEOUT_MINUTES} minutes | \ud83d\udca1 Partial results will be provided even if steps fail\\\"}]}]}\"\n\nRESPONSE=$(curl -s -X POST https://slack.com/api/chat.postMessage \\\n  -H \"Authorization: Bearer ${slack_token}\" \\\n  -H \"Content-Type: application/json\" \\\n  -d \"${PAYLOAD}\")\n\nif echo \"${RESPONSE}\" | grep -q '\"ok\":true'; then\n  echo \"\u2705 Investigation progress notification posted to Slack\"\nelse\n  echo \"\u26a0\ufe0f Investigation progress posting failed (continuing workflow)\"\n  echo \"Response: ${RESPONSE}\"\nfi\n\necho \"\u2705 Progress notification step completed\"\n",
-      "description": "Post consolidated investigation progress update",
+      "command": "echo 'INVESTIGATION PROGRESS - ONLY POST WHEN AGENTS START'\necho '==================================================='\n\n# Only post if at least one investigation step actually started\necho \"Environment is: ${environment}\"\ncase \"${environment}\" in\n  \"na-production\"|\"development\")\n    echo 'NA investigation environment detected'\n    ;;\n  \"eu-production\")\n    echo 'EU investigation environment detected'\n    ;;\n  \"na-integration\")\n    echo 'NA-INT investigation environment detected'\n    ;;\n  *)\n    echo \"Unknown environment: ${environment}, skipping progress notification\"\n    exit 0\n    ;;\nesac\n\n# Check if we have Slack token\nif [ -z \"${slack_token}\" ] || [ \"${slack_token}\" = \"null\" ] || [ \"${slack_token}\" = \"\" ]; then\n  echo 'No Slack token available - skipping progress notification'\n  exit 0\nfi\n\necho \"Posting to channel: ${NORMALIZED_CHANNEL_NAME}\"\n\n# Simple progress message\nPAYLOAD='{\"channel\":\"'${NORMALIZED_CHANNEL_NAME}'\",\"text\":\"🔍 AI Investigation Started\",\"blocks\":[{\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\"🔍 *AI Investigation Started*\\n'${incident_title}'\"}}]}'\n\necho 'Posting progress to Slack...'\nRESPONSE=$(curl -s -X POST https://slack.com/api/chat.postMessage \\\n  -H \"Authorization: Bearer ${slack_token}\" \\\n  -H \"Content-Type: application/json\" \\\n  -d \"${PAYLOAD}\")\n\necho \"Slack Response: ${RESPONSE}\"\n\nif echo \"${RESPONSE}\" | grep -q '\"ok\":true'; then\n  echo 'Investigation progress posted to Slack'\nelse\n  echo 'Investigation progress posting failed'\nfi",
+      "description": "Post investigation progress update AFTER agents start",
       "executor": {
         "type": "command",
         "config": {}
       },
       "depends": [
-        "post-incident-alert"
+        "investigate-cluster-health-na",
+        "investigate-cluster-health-eu", 
+        "investigate-cluster-health-na-int"
       ],
       "output": "investigation_progress_message",
       "continueOn": {
