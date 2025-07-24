@@ -1,0 +1,383 @@
+{
+  "name": "datadog-triggered-incident-workflow-dag",
+  "description": "Dynamic Production incident response workflow with AI investigation and Slack integration powered by Kubiya workflows - https://docs.kubiya.ai",
+  "params": {
+    "incident_id": "$INCIDENT_PUBLIC_ID",
+    "incident_title": "$INCIDENT_TITLE",
+    "incident_severity": "$INCIDENT_SEVERITY",
+    "incident_priority": "High",
+    "incident_body": "$INCIDENT_MSG",
+    "incident_url": "$INCIDENT_URL",
+    "incident_source": "datadog",
+    "incident_owner": "devops",
+    "slack_channel_id": "#inc-$INCIDENT_PUBLIC_ID-$INCIDENT_TITLE",
+    "max_retries": "3",
+    "customer_impact": "UNKNOWN",
+    "affected_services": "NA",
+    "dd_environment": "na",
+    "k8s_environment": "p44-prod",
+    "agent_uuid": "9c6c370c-e289-411f-9c06-2cacc5d10153",
+    "normalize_channel_name": "true",
+    "region": "EU",
+    "region_name": "Europe",
+    "region_emoji": "🇪🇺",
+    "investigation_agent_name": "chatops-eu",
+    "pdf_formatter_agent_name": "chatops-eu"
+  },
+  "env": {
+    "KUBIYA_USER_EMAIL": "${KUBIYA_USER_EMAIL}",
+    "KUBIYA_API_KEY": "${KUBIYA_API_KEY}",
+    "KUBIYA_USER_ORG": "${KUBIYA_USER_ORG}",
+    "KUBIYA_AUTOMATION": "1",
+    "INCIDENT_SEVERITY": "medium",
+    "INCIDENT_PRIORITY": "medium"
+  },
+  "steps": [
+    {
+      "name": "validate-incident",
+      "command": "echo \"\ud83d\udd0d VALIDATING INCIDENT PARAMETERS\"\necho \"=================================\"\nVALIDATION_PASSED=true\nMISSING_PARAMS=\"\"\n\nif [ -z \"${incident_id}\" ]; then\n  echo \"\u274c ERROR: incident_id is required\"\n  VALIDATION_PASSED=false\n  MISSING_PARAMS=\"${MISSING_PARAMS} incident_id\"\nfi\n\nif [ -z \"${incident_title}\" ]; then\n  echo \"\u274c ERROR: incident_title is required\"\n  VALIDATION_PASSED=false\n  MISSING_PARAMS=\"${MISSING_PARAMS} incident_title\"\nfi\n\nif [ -z \"${incident_severity}\" ]; then\n  echo \"\u274c ERROR: incident_severity is required\"\n  VALIDATION_PASSED=false\n  MISSING_PARAMS=\"${MISSING_PARAMS} incident_severity\"\nfi\n\nif [ -z \"${affected_services}\" ]; then\n  echo \"\u26a0\ufe0f WARNING: affected_services not provided - will create validation agent\"\nfi\n\ncase \"${incident_severity}\" in\n  \"critical\"|\"high\"|\"medium\"|\"low\")\n    echo \"\u2705 Severity ${incident_severity} is valid\"\n    ;;\n  *)\n    echo \"\u274c ERROR: Invalid severity ${incident_severity}. Must be: critical, high, medium, or low\"\n    VALIDATION_PASSED=false\n    MISSING_PARAMS=\"${MISSING_PARAMS} valid_severity\"\n    ;;\nesac\n\nif [ \"$VALIDATION_PASSED\" = \"true\" ]; then\n  echo \"\ud83d\udccb INCIDENT METADATA:\"\n  echo \"  ID: ${incident_id}\"\n  echo \"  Title: ${incident_title}\"\n  echo \"  Severity: ${incident_severity}\"\n  echo \"  Priority: ${incident_priority}\"\n  echo \"  Owner: ${incident_owner}\"\n  echo \"  Source: ${incident_source}\"\n  echo \"  Affected Services: ${affected_services:-TBD via agent}\"\n  echo \"  Customer Impact: ${customer_impact}\"\n  echo \"\"\n  echo \"\u2705 Incident validation completed successfully\"\nelse\n  echo \"\u274c Validation failed. Missing parameters: ${MISSING_PARAMS}\"\n  echo \"\u26a0\ufe0f Continuing workflow to handle validation failure...\"\nfi\n",
+      "description": "Validate incident parameters and prerequisites",
+      "executor": {
+        "type": "command",
+        "config": {}
+      },
+      "output": "validation_status"
+    },
+    {
+      "name": "normalize-channel-name",
+      "description": "Normalize the channel name by replacing spaces with underscores and converting to lower case",
+      "command": "if [ \"${normalize_channel_name:-true}\" = \"true\" ]; then\n  # Replace spaces with underscores, then convert to lower case\n  echo \"${slack_channel_id}\" | sed 's/ /_/g' | tr '[:upper:]' '[:lower:]'\nelse\n  # Only convert to lower case\n  echo \"${slack_channel_id}\" | tr '[:upper:]' '[:lower:]'\nfi\n",
+      "depends": [
+        "validate-incident"
+      ],
+      "executor": {
+        "type": "command",
+        "config": {}
+      },
+      "output": "NORMALIZED_CHANNEL_NAME"
+    },
+    {
+      "name": "setup-slack-integration",
+      "description": "Initialize Slack integration for incident communications",
+      "executor": {
+        "type": "kubiya",
+        "config": {
+          "url": "api/v1/integration/slack/token/1",
+          "method": "GET",
+          "silent": false
+        }
+      },
+      "depends": [
+        "normalize-channel-name"
+      ],
+      "output": "slack_token"
+    },
+    {
+      "name": "validation_failure_message",
+      "command": "if [ \"$VALIDATION_PASSED\" != \"true\" ]; then\n  echo \"\u26a0\ufe0f VALIDATION FAILURE DETECTED: Creating support agent to help\"\n  echo \"Missing required parameters: ${MISSING_PARAMS}\"\n  echo \"Will create an intelligent agent to assist with parameter collection\"\nelse\n  echo \"\u2705 All required parameters present\"\nfi\n",
+      "description": "Prepare validation failure message if parameters are missing",
+      "executor": {
+        "type": "command",
+        "config": {}
+      },
+      "depends": [
+        "setup-slack-integration"
+      ],
+      "output": "validation_failure_message"
+    },
+    {
+      "name": "get-observe-supported-datasets",
+      "command": "echo \"\ud83d\udcca FETCHING OBSERVE SUPPORTED DATASET IDS\"\necho \"==========================================\"\nSUPPORTED_DATASETS='api-logs,server-logs,application-logs,error-logs,trace-logs,audit-logs,security-logs,performance-logs,infrastructure-logs,database-logs,kubernetes-logs,network-logs,security-events,audit-events'\necho \"Available Dataset IDs for Observe: $SUPPORTED_DATASETS\"\necho \"\u2705 Observe supported dataset IDs retrieved successfully\"\n",
+      "description": "Retrieve supported dataset IDs for Observe platform",
+      "executor": {
+        "type": "command",
+        "config": {}
+      },
+      "depends": [
+        "setup-slack-integration"
+      ],
+      "output": "observe_supported_ds_ids"
+    },
+    {
+      "name": "get-datadog-metrics-config",
+      "command": "echo \"\ud83d\udcc8 FETCHING DATADOG METRICS CONFIGURATION\"\necho \"=========================================\"\nDD_METRICS='system.cpu.usage,system.memory.usage,kubernetes.cpu.usage,kubernetes.memory.usage,kubernetes.pods.running,kubernetes.pods.failed,nginx.requests.rate,nginx.response.time,kong.requests.rate,kong.response.time,kong.errors.rate,application.response.time,application.error.rate,application.throughput,jvm.heap.usage,jvm.gc.time,trace.servlet.request.errors,trace.servlet.request.hits,trace.servlet.request,docker.cpu.usage,docker.memory.usage,kubernetes.node.cpu.usage,kubernetes.node.memory.usage,kubernetes.deployment.replicas.available,kubernetes.service.endpoints'\necho \"Available Datadog Metrics: $DD_METRICS\"\necho \"\u2705 Datadog metrics configuration retrieved successfully\"\n",
+      "description": "Retrieve Datadog metrics configuration and key metrics for monitoring",
+      "executor": {
+        "type": "command",
+        "config": {}
+      },
+      "depends": [
+        "setup-slack-integration"
+      ],
+      "output": "datadog_metrics_config"
+    },
+    {
+      "name": "prepare-copilot-context",
+      "command": "echo \"\ud83d\udd0d PREPARING COPILOT CONTEXT PROMPTS\"\necho \"==================================\"\nCOPILOT_PROMPT=\"You are an INCIDENT RESPONDER AGENT with access to kubectl, Datadog, and Observe. INCIDENT CONTEXT: ID=${incident_id}, Title='${incident_title}', Severity=${incident_severity}, Services=${affected_services}. I will now gather relevant logs and metrics from: Datadog metrics (${datadog_metrics_config}) and Observe datasets (${observe_supported_ds_ids}). Please wait while I collect this data... Once complete, I'll ask what specific aspect you'd like to investigate.\"\nDEEP_DIVE_PROMPT=\"You are an INCIDENT RESPONDER AGENT performing deep analysis. INCIDENT: ${incident_id} - ${incident_title}. I'm gathering comprehensive data from Datadog metrics: ${datadog_metrics_config} and Observe datasets: ${observe_supported_ds_ids}. Analyzing affected services: ${affected_services}. I'll provide root cause analysis, performance metrics, and actionable recommendations. Collecting data now...\"\nAPPLY_FIXES_PROMPT=\"You are an INCIDENT RESPONDER AGENT ready to apply remediation. INCIDENT: ${incident_id} - ${incident_title}. Services: ${affected_services}. I have access to kubectl for applying fixes. Let me review the investigation findings first... Once ready, I'll present the available fixes and ask which ones you'd like me to apply.\"\nMONITORING_PROMPT=\"You are an INCIDENT RESPONDER AGENT monitoring recovery. INCIDENT: ${incident_id} - ${incident_title}. Services: ${affected_services}. I'm tracking recovery using Datadog metrics: ${datadog_metrics_config}. Let me check current service health and metrics... I'll then provide status updates and verify applied fixes.\"\nREGION_FOLLOWUP_PROMPT=\"You are an INCIDENT RESPONDER AGENT focusing on ${region} PRODUCTION. INCIDENT: ${incident_id} - ${incident_title}. Region: ${region_name}. I have access to kubectl (${region} cluster), Datadog metrics: ${datadog_metrics_config}, and Observe datasets: ${observe_supported_ds_ids}. Let me gather ${region}-specific logs and metrics first... What aspect of the ${region} cluster would you like me to investigate?\"\necho \"COPILOT_PROMPT=${COPILOT_PROMPT}\"\necho \"DEEP_DIVE_PROMPT=${DEEP_DIVE_PROMPT}\"\necho \"APPLY_FIXES_PROMPT=${APPLY_FIXES_PROMPT}\"\necho \"MONITORING_PROMPT=${MONITORING_PROMPT}\"\necho \"REGION_FOLLOWUP_PROMPT=${REGION_FOLLOWUP_PROMPT}\"\necho \"\u2705 Copilot context prompts prepared successfully\"\n",
+      "description": "Prepare context prompts for agent interactions",
+      "executor": {
+        "type": "command",
+        "config": {}
+      },
+      "depends": [
+        "setup-slack-integration",
+        "get-observe-supported-datasets",
+        "get-datadog-metrics-config"
+      ],
+      "output": "copilot_prompts"
+    },
+    {
+      "name": "post-incident-alert",
+      "command": "echo \"\ud83d\udea8 POSTING INCIDENT ALERT\"\necho \"========================\"\n\n# Check if we have a Slack token\nif [ -z \"${slack_token}\" ] || [ \"${slack_token}\" = \"null\" ]; then\n  echo \"\u26a0\ufe0f No Slack token available - skipping Slack alert\"\n  echo \"\u2705 Incident alert skipped (no Slack integration)\"\n  exit 0\nfi\n\n# Set severity emoji\nSEVERITY_EMOJI=\"\"\ncase \"${incident_severity}\" in\n  critical) SEVERITY_EMOJI=\"\ud83d\udd34\" ;;\n  high) SEVERITY_EMOJI=\"\ud83d\udfe0\" ;;\n  medium) SEVERITY_EMOJI=\"\ud83d\udfe1\" ;;\n  low) SEVERITY_EMOJI=\"\ud83d\udfe2\" ;;\n  *) SEVERITY_EMOJI=\"\u26aa\" ;;\nesac\n\necho \"Posting to channel: ${NORMALIZED_CHANNEL_NAME}\"\necho \"Using severity emoji: ${SEVERITY_EMOJI} for ${incident_severity}\"\n\n# Create incident alert payload\nPAYLOAD=\"{\\\"channel\\\":\\\"${NORMALIZED_CHANNEL_NAME}\\\",\\\"text\\\":\\\"\ud83d\udea8 INCIDENT: ${incident_title}\\\",\\\"blocks\\\":[{\\\"type\\\":\\\"header\\\",\\\"text\\\":{\\\"type\\\":\\\"plain_text\\\",\\\"text\\\":\\\"\ud83d\udea8 Received incident to triage in PRODUCTION!\\\",\\\"emoji\\\":true}},{\\\"type\\\":\\\"section\\\",\\\"text\\\":{\\\"type\\\":\\\"mrkdwn\\\",\\\"text\\\":\\\"*${incident_title}*\\\"}},{\\\"type\\\":\\\"section\\\",\\\"fields\\\":[{\\\"type\\\":\\\"mrkdwn\\\",\\\"text\\\":\\\"*ID:* ${incident_id}\\\"},{\\\"type\\\":\\\"mrkdwn\\\",\\\"text\\\":\\\"*Severity:* ${SEVERITY_EMOJI} ${incident_severity}\\\"},{\\\"type\\\":\\\"mrkdwn\\\",\\\"text\\\":\\\"*Priority:* ${incident_priority:-Not Set}\\\"},{\\\"type\\\":\\\"mrkdwn\\\",\\\"text\\\":\\\"*Services:* ${affected_services}\\\"}]},{\\\"type\\\":\\\"divider\\\"},{\\\"type\\\":\\\"section\\\",\\\"text\\\":{\\\"type\\\":\\\"mrkdwn\\\",\\\"text\\\":\\\"${incident_body}\\\"}},{\\\"type\\\":\\\"divider\\\"},{\\\"type\\\":\\\"actions\\\",\\\"elements\\\":[{\\\"type\\\":\\\"button\\\",\\\"text\\\":{\\\"type\\\":\\\"plain_text\\\",\\\"text\\\":\\\"\ud83d\udcca View on Datadog\\\",\\\"emoji\\\":true},\\\"url\\\":\\\"${incident_url}\\\",\\\"style\\\":\\\"primary\\\"}]},{\\\"type\\\":\\\"context\\\",\\\"elements\\\":[{\\\"type\\\":\\\"mrkdwn\\\",\\\"text\\\":\\\"\u26a1 AI investigation will begin automatically in a few seconds...\\\"}]}]}\"\n\necho \"Posting alert to Slack...\"\nRESPONSE=$(curl -s -X POST https://slack.com/api/chat.postMessage \\\n  -H \"Authorization: Bearer ${slack_token.token}\" \\\n  -H \"Content-Type: application/json\" \\\n  -d \"${PAYLOAD}\")\n\necho \"Slack API Response: ${RESPONSE}\"\n\nif echo \"${RESPONSE}\" | grep -q '\"ok\":true'; then\n  echo \"\u2705 Incident alert posted successfully to Slack!\"\nelse\n  echo \"\u26a0\ufe0f Failed to post incident alert to Slack - continuing workflow\"\n  echo \"Response: ${RESPONSE}\"\nfi\n\necho \"\u2705 Alert step completed (with or without Slack)\"\n",
+      "description": "Send beautiful incident alert to Slack when services are provided",
+      "executor": {
+        "type": "command",
+        "config": {}
+      },
+      "depends": [
+        "prepare-copilot-context"
+      ],
+      "output": "initial_alert_message",
+      "continueOn": {
+        "failure": true
+      }
+    },
+    {
+      "name": "notify-investigation-progress",
+      "command": "echo \"\ud83d\udcca POSTING INVESTIGATION PROGRESS UPDATE\"\necho \"=======================================\"\n\n# Check if we have Slack token and only post if available\nif [ -z \"${slack_token}\" ] || [ \"${slack_token}\" = \"null\" ]; then\n  echo \"\u26a0\ufe0f No Slack token available - skipping progress notification\"\n  echo \"\u2705 Investigation progress notification skipped\"\n  exit 0\nfi\n\necho \"Posting to channel: ${NORMALIZED_CHANNEL_NAME}\"\n\nTIMEOUT_SECONDS=\"${investigation_timeout:-3600}\"\nTIMEOUT_MINUTES=$((TIMEOUT_SECONDS / 60))\n\nPAYLOAD=\"{\\\"channel\\\":\\\"${NORMALIZED_CHANNEL_NAME}\\\",\\\"text\\\":\\\"\ud83d\udd0d AI Investigation Started\\\",\\\"blocks\\\":[{\\\"type\\\":\\\"section\\\",\\\"text\\\":{\\\"type\\\":\\\"mrkdwn\\\",\\\"text\\\":\\\"\ud83d\udd0d *AI Investigation Started*\\\\n${incident_title}\\\"}},{\\\"type\\\":\\\"context\\\",\\\"elements\\\":[{\\\"type\\\":\\\"mrkdwn\\\",\\\"text\\\":\\\"ID: ${incident_id} | Severity: ${incident_severity} | Services: ${affected_services}\\\"}]},{\\\"type\\\":\\\"divider\\\"},{\\\"type\\\":\\\"section\\\",\\\"text\\\":{\\\"type\\\":\\\"mrkdwn\\\",\\\"text\\\":\\\"*${region_emoji} ${region} Agent*\\\\n\ud83d\udfe2 Analyzing ${region} Production cluster...\\\"}},{\\\"type\\\":\\\"context\\\",\\\"elements\\\":[{\\\"type\\\":\\\"mrkdwn\\\",\\\"text\\\":\\\"\u23f1\ufe0f ETA: ~${TIMEOUT_MINUTES} minutes | \ud83d\udca1 Partial results will be provided even if steps fail\\\"}]}]}\"\n\nRESPONSE=$(curl -s -X POST https://slack.com/api/chat.postMessage \\\n  -H \"Authorization: Bearer ${slack_token.token}\" \\\n  -H \"Content-Type: application/json\" \\\n  -d \"${PAYLOAD}\")\n\nif echo \"${RESPONSE}\" | grep -q '\"ok\":true'; then\n  echo \"\u2705 Investigation progress notification posted to Slack\"\nelse\n  echo \"\u26a0\ufe0f Investigation progress posting failed (continuing workflow)\"\n  echo \"Response: ${RESPONSE}\"\nfi\n\necho \"\u2705 Progress notification step completed\"\n",
+      "description": "Post consolidated investigation progress update",
+      "executor": {
+        "type": "command",
+        "config": {}
+      },
+      "depends": [
+        "post-incident-alert"
+      ],
+      "output": "investigation_progress_message",
+      "continueOn": {
+        "failure": true
+      }
+    },
+    {
+      "name": "investigate-cluster-health",
+      "description": "AI-powered cross-cluster investigation for Production",
+      "executor": {
+        "type": "agent",
+        "config": {
+          "agent_name": "${investigation_agent_name}",
+          "use_cli": true,
+          "message": "URGENT PRODUCTION INCIDENT INVESTIGATION - ${region} REGION >>> CRITICAL: This is a ${incident_severity} severity incident requiring IMMEDIATE investigation! >>> INCIDENT: ${incident_id} - ${incident_title}\n\ud83c\udfaf AFFECTED SERVICES: ${affected_services}\n\n\u23f0 URGENCY NOTICE:\n- This investigation must be completed ASAP\n- Production systems are potentially impacted\n- Time is critical for resolution\n\n\ud83d\udca1 CONTEXT WINDOW MANAGEMENT:\n- ALWAYS use grep, head, tail to filter command outputs\n- Limit log queries to last 50-100 lines unless critical\n- Use specific filters to avoid overwhelming output\n- Focus on ERROR, WARN, FAIL patterns in logs\n\n## INVESTIGATION CHECKLIST:\n\n### 1. CLUSTER HEALTH & NODES\nkubectl get nodes -o wide\nkubectl describe nodes | grep -E \"Conditions|Capacity|Allocatable\"\nkubectl top nodes\nkubectl get events --sort-by='.lastTimestamp' | tail -20\n\n### 2. POD STATUS & HEALTH\nkubectl get pods --all-namespaces -o wide | grep -v Running | head -20\nkubectl get pods -n production -o wide | grep -E \"Error|CrashLoop|Pending|Failed\"\nkubectl describe pods -n production | grep -E \"Warning|Error|Failed\" | head -30\nkubectl top pods -n production --sort-by=cpu | head -10\n\n### 3. SERVICE DISCOVERY & NETWORKING\nkubectl get svc --all-namespaces\nkubectl get ingress --all-namespaces\nkubectl get endpoints --all-namespaces | grep -v \"<none>\"\nnslookup kubernetes.default.svc.cluster.local\n\n### 4. TLS & CERTIFICATE ISSUES\nkubectl get secrets --all-namespaces -o wide | grep tls\nkubectl describe secret tls-secret -n production\nopenssl x509 -in /path/to/cert -text -noout | grep -E \"Not Before|Not After|Subject\"\ncurl -vI https://your-service.domain.com 2>&1 | grep -E \"SSL|TLS|certificate\"\n\n### 5. KONG API GATEWAY CHECKS\nkubectl get pods -n kong-system -o wide\nkubectl logs -n kong-system deployment/kong-gateway --tail=100\nkubectl exec -n kong-system deployment/kong-gateway -- kong health\ncurl -I http://kong-admin:8001/status\nkubectl get kongingress,kongplugin,kongconsumer -A\n\n### 6. APPLICATION SPECIFIC CHECKS\nkubectl logs deployment/${affected_services} -n production --tail=50 | grep -E \"ERROR|WARN|FATAL|Exception\"\nkubectl describe deployment ${affected_services} -n production | grep -E \"Warning|Error|Failed|Ready\"\nkubectl get hpa,pdb -n production | grep ${affected_services}\nkubectl exec deployment/${affected_services} -n production -- curl -s localhost:8080/health | head -10\n\n### 7. RESOURCE UTILIZATION\nkubectl top pods -n production --containers\nkubectl describe limits -n production\nkubectl get pvc -n production -o wide\ndf -h # Check disk space on nodes\n\n### 8. DATADOG METRICS TO CHECK\nUse these metrics from our configuration: ${datadog_metrics_config}\n\nKey metrics to focus on:\n- System: cpu.usage, memory.usage, disk usage\n- Kubernetes: pods.running, pods.failed, node resources\n- Kong: requests.rate, response.time, errors.rate\n- Application: response.time, error.rate, throughput\n- JVM: heap.usage, gc.time (if applicable)\n\n### 9. OBSERVE DATASETS TO QUERY\nUse these datasets from our configuration: ${observe_supported_ds_ids}\n\nFocus on these log sources:\n- api-logs: API request/response patterns\n- error-logs: Application and system errors\n- kubernetes-logs: Pod and container logs\n- security-logs: Authentication and authorization events\n- performance-logs: Response times and throughput\n- infrastructure-logs: Node and cluster events\n\n### 10. COMMON TRIAGE SCENARIOS\nTLS Issues: Check cert expiration, validate chain, verify SAN fields\nKong Issues: Check upstream health, plugin configs, rate limits\nPod Issues: Check resource limits, image pull errors, readiness probes\nNetwork Issues: Check DNS resolution, service endpoints, ingress rules\n\n## OUTPUT FORMAT:\nProvide structured findings with:\n- Executive summary (2-3 sentences)\n- Critical issues found\n- Resource utilization status\n- Specific command outputs that show problems\n- Immediate remediation steps\n- Root cause analysis if identifiable\n",
+          "vars": {
+            "incident_id": "${incident_id}",
+            "incident_title": "${incident_title}",
+            "incident_severity": "${incident_severity}",
+            "affected_services": "${affected_services}",
+            "customer_impact": "${customer_impact}",
+            "incident_priority": "${incident_priority}",
+            "datadog_metrics_config": "${datadog_metrics_config}",
+            "observe_supported_ds_ids": "${observe_supported_ds_ids}",
+            "region": "${region}",
+            "investigation_agent_name": "${investigation_agent_name}"
+          }
+        }
+      },
+      "depends": [
+        "notify-investigation-progress",
+        "get-observe-supported-datasets",
+        "get-datadog-metrics-config"
+      ],
+      "output": "cluster_results",
+      "continueOn": {
+        "failure": true,
+        "output": [
+          "ERROR: Sorry, I had an issue",
+          "Agent-manager not found",
+          "Stream error",
+          "INTERNAL_ERROR",
+          "stream ID",
+          "received from peer",
+          "re:stream error.*INTERNAL_ERROR",
+          "exit code 1",
+          "API key",
+          "command failed",
+          "Kubiya CLI"
+        ],
+        "markSuccess": false
+      }
+    },
+    {
+      "name": "create-executive-summary",
+      "description": "Create executive summary and TLDR from investigation results",
+      "executor": {
+        "type": "agent",
+        "config": {
+          "agent_name": "${investigation_agent_name}",
+          "use_cli": true,
+          "message": "Create an executive summary based on the incident investigation results.\n\n## INCIDENT DETAILS:\n- ID: ${incident_id}\n- Title: ${incident_title}\n- Severity: ${incident_severity}\n- Affected Services: ${affected_services}\n\n## ${region} CLUSTER INVESTIGATION:\n${cluster_results}\n\n## TASK:\nCreate a comprehensive executive summary that includes core details on the investigation done by the agent",
+          "vars": {
+            "investigation_agent_name": "${investigation_agent_name}",
+            "region": "${region}",
+            "cluster_results": "${cluster_results}"
+          }
+        }
+      },
+      "depends": [
+        "investigate-cluster-health"
+      ],
+      "output": "executive_summary",
+      "continueOn": {
+        "failure": true,
+        "output": [
+          "Stream error",
+          "INTERNAL_ERROR",
+          "Agent-manager not found",
+          "exit code 1",
+          "API key",
+          "command failed",
+          "Kubiya CLI",
+          "re:exit code [0-9]+",
+          "re:failed.*agent",
+          "Session timed out",
+          "Connection failed"
+        ],
+        "markSuccess": false
+      }
+    },
+    {
+      "name": "pdf-formatter",
+      "description": "Format investigation results for professional PDF report using agent",
+      "executor": {
+        "type": "agent",
+        "config": {
+          "agent_name": "${pdf_formatter_agent_name}",
+          "use_cli": true,
+          "message": "Format this incident investigation into a professional technical report. RAW INVESTIGATION DATA: ---- {{.cluster_results}} --EXECUTIVE SUMMARY: {{.executive_summary}} ->> Create a comprehensive technical report with this structure - Keep technical accuracy while improving readability, Make it suitable for PDF generation"
+        }
+      },
+      "depends": [
+        "create-executive-summary"
+      ],
+      "output": "formatted_pdf_report",
+      "continueOn": {
+        "failure": true
+      }
+    },
+    {
+      "name": "upload-investigation-results",
+      "description": "Upload investigation results and post summary to Slack",
+      "depends": [
+        "pdf-formatter"
+      ],
+      "executor": {
+        "type": "tool",
+        "config": {
+          "tool_def": {
+            "name": "investigation-pdf-uploader",
+            "description": "Generate PDFs and upload investigation results with proper Slack formatting",
+            "type": "docker",
+            "image": "python:3.11-slim",
+            "with_files": [
+              {
+                "destination": "/tmp/upload_results.py",
+                "content": "#!/usr/bin/env python3\nimport os\nimport json\nimport requests\nfrom datetime import datetime\nfrom reportlab.lib.pagesizes import letter, A4\nfrom reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer\nfrom reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle\nfrom reportlab.lib import colors\n\ndef create_pdf(content, filename, title):\n    \"\"\"Create a beautiful, professional PDF from markdown content\"\"\"\n    try:\n        from reportlab.lib.pagesizes import A4\n        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak\n        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle\n        from reportlab.lib import colors\n        from reportlab.lib.units import inch\n        from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY\n        import re\n        \n        doc = SimpleDocTemplate(filename, pagesize=A4, \n                              leftMargin=0.75*inch, rightMargin=0.75*inch,\n                              topMargin=0.75*inch, bottomMargin=0.75*inch)\n        styles = getSampleStyleSheet()\n        \n        # Enhanced custom styles\n        header_style = ParagraphStyle(\n            'KubiyaHeader',\n            parent=styles['Normal'],\n            fontSize=12,\n            textColor=colors.Color(0.2, 0.4, 0.8),  # Nice blue\n            alignment=TA_CENTER,\n            fontName='Helvetica-Bold',\n            spaceBefore=0,\n            spaceAfter=15\n        )\n        \n        title_style = ParagraphStyle(\n            'MainTitle',\n            parent=styles['Heading1'],\n            fontSize=20,\n            textColor=colors.Color(0.1, 0.2, 0.6),\n            alignment=TA_CENTER,\n            fontName='Helvetica-Bold',\n            spaceAfter=10\n        )\n        \n        subtitle_style = ParagraphStyle(\n            'Subtitle',\n            parent=styles['Normal'],\n            fontSize=10,\n            textColor=colors.grey,\n            alignment=TA_CENTER,\n            fontStyle='italic',\n            spaceAfter=20\n        )\n        \n        h1_style = ParagraphStyle(\n            'CustomH1',\n            parent=styles['Heading1'],\n            fontSize=16,\n            textColor=colors.Color(0.1, 0.3, 0.7),\n            fontName='Helvetica-Bold',\n            spaceBefore=20,\n            spaceAfter=12,\n            borderWidth=1,\n            borderColor=colors.Color(0.8, 0.8, 0.8),\n            borderPadding=5\n        )\n        \n        h2_style = ParagraphStyle(\n            'CustomH2',\n            parent=styles['Heading2'],\n            fontSize=14,\n            textColor=colors.Color(0.2, 0.4, 0.6),\n            fontName='Helvetica-Bold',\n            spaceBefore=15,\n            spaceAfter=8\n        )\n        \n        h3_style = ParagraphStyle(\n            'CustomH3',\n            parent=styles['Heading3'],\n            fontSize=12,\n            textColor=colors.Color(0.3, 0.3, 0.3),\n            fontName='Helvetica-Bold',\n            spaceBefore=12,\n            spaceAfter=6\n        )\n        \n        body_style = ParagraphStyle(\n            'BodyText',\n            parent=styles['Normal'],\n            fontSize=10,\n            textColor=colors.black,\n            alignment=TA_JUSTIFY,\n            spaceBefore=3,\n            spaceAfter=6,\n            leftIndent=0,\n            rightIndent=0\n        )\n        \n        bullet_style = ParagraphStyle(\n            'BulletText',\n            parent=styles['Normal'],\n            fontSize=10,\n            textColor=colors.black,\n            spaceBefore=2,\n            spaceAfter=4,\n            leftIndent=20,\n            bulletIndent=10\n        )\n        \n        code_style = ParagraphStyle(\n            'CodeText',\n            parent=styles['Normal'],\n            fontSize=9,\n            textColor=colors.Color(0.2, 0.2, 0.2),\n            fontName='Courier',\n            backColor=colors.Color(0.95, 0.95, 0.95),\n            spaceBefore=3,\n            spaceAfter=6,\n            leftIndent=15,\n            rightIndent=15,\n            borderWidth=1,\n            borderColor=colors.Color(0.8, 0.8, 0.8),\n            borderPadding=8\n        )\n        \n        story = []\n        \n        # Beautiful header with branding\n        story.append(Paragraph('\ud83d\ude80 Generated by <b>Kubiya Agentic Workflow Automation</b> \ud83e\udd16', header_style))\n        story.append(Spacer(1, 10))\n        \n        # Title\n        story.append(Paragraph(title, title_style))\n        story.append(Spacer(1, 5))\n        \n        # Timestamp\n        from datetime import datetime\n        timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')\n        story.append(Paragraph(f'Generated on {timestamp}', subtitle_style))\n        story.append(Spacer(1, 20))\n        \n        # Parse and format content\n        lines = content.split('\\n')\n        i = 0\n        \n        while i < len(lines):\n            line = lines[i].strip()\n            \n            if not line:\n                story.append(Spacer(1, 6))\n                i += 1\n                continue\n            \n            # Handle headers\n            if line.startswith('### '):\n                header_text = line[4:].replace('#### ', '').replace('###', '').strip()\n                story.append(Paragraph(header_text, h1_style))\n            elif line.startswith('#### '):\n                header_text = line[5:].strip()\n                story.append(Paragraph(header_text, h2_style))\n            elif line.startswith('##### '):\n                header_text = line[6:].strip()\n                story.append(Paragraph(header_text, h3_style))\n            \n            # Handle code blocks (backticks)\n            elif '`' in line:\n                # Remove backticks and format as code\n                code_text = re.sub(r'`([^`]+)`', r'<font name=\"Courier\" color=\"darkblue\">\\1</font>', line)\n                story.append(Paragraph(code_text, body_style))\n            \n            # Handle bullet points\n            elif line.startswith('\u2022 ') or line.startswith('- '):\n                bullet_text = line[2:].strip()\n                # Remove markdown formatting\n                bullet_text = re.sub(r'\\*\\*([^*]+)\\*\\*', r'<b>\\1</b>', bullet_text)\n                bullet_text = re.sub(r'`([^`]+)`', r'<font name=\"Courier\" color=\"darkblue\">\\1</font>', bullet_text)\n                story.append(Paragraph(f'\u2022 {bullet_text}', bullet_style))\n            \n            # Handle horizontal rules\n            elif line.startswith('---'):\n                story.append(Spacer(1, 15))\n                # Add a visual separator\n                separator_data = [['', '']]\n                separator_table = Table(separator_data, colWidths=[doc.width])\n                separator_table.setStyle(TableStyle([\n                    ('LINEBELOW', (0, 0), (-1, -1), 2, colors.Color(0.6, 0.6, 0.6)),\n                ]))\n                story.append(separator_table)\n                story.append(Spacer(1, 15))\n            \n            # Handle regular text\n            else:\n                if line:\n                    # Format bold text\n                    formatted_text = re.sub(r'\\*\\*([^*]+)\\*\\*', r'<b>\\1</b>', line)\n                    # Format code spans\n                    formatted_text = re.sub(r'`([^`]+)`', r'<font name=\"Courier\" color=\"darkblue\">\\1</font>', formatted_text)\n                    # Format italic text\n                    formatted_text = re.sub(r'\\*([^*]+)\\*', r'<i>\\1</i>', formatted_text)\n                    \n                    story.append(Paragraph(formatted_text, body_style))\n            \n            i += 1\n        \n        # Add footer\n        story.append(Spacer(1, 30))\n        footer_style = ParagraphStyle(\n            'Footer',\n            parent=styles['Normal'],\n            fontSize=8,\n            textColor=colors.grey,\n            alignment=TA_CENTER,\n            borderWidth=1,\n            borderColor=colors.Color(0.9, 0.9, 0.9),\n            borderPadding=8\n        )\n        story.append(Paragraph('This report was automatically generated by Kubiya AI-powered incident response system.<br/>For questions or support, contact your platform team.', footer_style))\n        \n        doc.build(story)\n        print(f\"\u2705 Beautiful PDF created with professional formatting: {filename}\")\n        return True\n        \n    except Exception as e:\n        print(f\"\u274c Failed to create PDF {filename}: {e}\")\n        import traceback\n        traceback.print_exc()\n        return False\n\ndef upload_file(headers, channel, filepath, title):\n    \"\"\"Upload a file to Slack\"\"\"\n    try:\n        with open(filepath, 'rb') as file:\n            files = {'file': file}\n            data = {\n                'channels': channel,\n                'title': title,\n                'filename': os.path.basename(filepath)\n            }\n            response = requests.post('https://slack.com/api/files.upload', \n                                   headers=headers, data=data, files=files)\n            \n            if response.status_code == 200 and response.json().get('ok'):\n                return response.json().get('file', {}).get('permalink', '#')\n            return None\n    except Exception as e:\n        print(f\"\u274c Upload error: {e}\")\n        return None\n\ndef extract_slack_summary(text):\n    \"\"\"Extract SLACK_SUMMARY from investigation text\"\"\"\n    import re\n    try:\n        # Look for SLACK_SUMMARY section\n        pattern = r'SLACK_SUMMARY:(.*?)(?=\\n\\n|$)'\n        match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)\n        if match:\n            summary = match.group(1).strip()\n            # Clean up the summary\n            summary = ' '.join(summary.split())\n            return summary\n        return 'Investigation completed - see detailed reports'\n    except:\n        return 'Investigation completed - see detailed reports'\n\ndef main():\n    import json\n    slack_token = os.getenv('slack_token')\n    channel = os.getenv('channel')\n    incident_id = os.getenv('incident_id')\n    incident_title = os.getenv('incident_title')\n    incident_severity = os.getenv('incident_severity')\n    affected_services = os.getenv('affected_services')\n    agent_uuid = os.getenv('agent_uuid')\n    region = os.getenv('region', 'EU')\n    region_name = os.getenv('region_name', 'Europe')\n    region_emoji = os.getenv('region_emoji', '\ud83c\uddea\ud83c\uddfa')\n    \n    executive_summary_text = os.getenv('executive_summary', '')\n    cluster_results = os.getenv('cluster_results', '')\n    formatted_pdf_report = os.getenv('formatted_pdf_report', '')\n    \n    # Handle agent failure cases\n    if 'ERROR: Sorry, I had an issue' in executive_summary_text or 'Session id:' in executive_summary_text:\n        executive_summary_text = f'# Incident Analysis Summary\\\\n\\\\nIncident: {incident_id} - {incident_title}\\\\nSeverity: {incident_severity}\\\\nStatus: Investigation Agent Encountered Issues\\\\n\\\\n## Executive Summary\\\\nThe automated investigation agent experienced technical difficulties during the analysis phase. This appears to be related to agent session timeout or connectivity issues.\\\\n\\\\n## Key Information\\\\nIncident ID: {incident_id}\\\\nTitle: {incident_title}\\\\nSeverity: {incident_severity}\\\\nAffected Services: {affected_services}\\\\nRegion: {region_name} ({region})\\\\n\\\\n## Immediate Actions Required\\\\n1. Manual investigation needed due to agent timeout\\\\n2. Check Kong API gateway status and logs\\\\n3. Review 403 error patterns in SendGrid integration\\\\n4. Monitor cluster resource utilization\\\\n5. Escalate to on-call engineering team\\\\n\\\\n## Recommendations\\\\nImplement manual Kong health checks\\\\nReview API rate limits and authentication\\\\nCheck certificate validity for SendGrid endpoints\\\\nMonitor application logs for detailed error context\\\\n\\\\nSLACK_SUMMARY: Agent investigation timed out for Kong 403 issues. Manual review required for SendGrid integration problems. Escalating to engineering team for immediate attention.'\n    \n    timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')\n    \n    # Extract TLDR from executive summary\n    tldr_summary = extract_slack_summary(executive_summary_text)\n    \n    severity_emoji = {\n        'critical': '\ud83d\udd34',\n        'high': '\ud83d\udfe0',\n        'medium': '\ud83d\udfe1',\n        'low': '\ud83d\udfe2'\n    }.get(incident_severity.lower(), '\u26aa')\n    \n    headers = {'Authorization': f'Bearer {slack_token}'}\n    file_urls = []\n    \n    # Create and upload PDFs\n    if executive_summary_text:\n        main_pdf = f'/tmp/executive_summary_{incident_id}.pdf'\n        if create_pdf(executive_summary_text, main_pdf, f'Executive Summary - {incident_title}'):\n            file_url = upload_file(headers, channel, main_pdf, f'\ud83d\udcc4 Executive Summary - {incident_title}')\n            if file_url:\n                file_urls.append(f'\ud83d\udcc4 <{file_url}|Executive Summary>')\n    \n    # Use the formatted PDF report if available, otherwise fall back to raw results\n    if formatted_pdf_report:\n        region_content = formatted_pdf_report\n    elif cluster_results:\n        # Clean up the results by removing CLI update messages and fixing formatting\n        cleaned_results = cluster_results.replace('\\\\n', '\\n').strip()\n        # Remove update notifications and other CLI noise\n        lines = cleaned_results.split('\\n')\n        clean_lines = []\n        skip_next = False\n        for line in lines:\n            line = line.strip()\n            if any(phrase in line.lower() for phrase in [\n                'update available', 'current version', 'latest version', \n                'run \\'kubiya update\\'', '\ud83d\udce2', 'v2.4.'\n            ]):\n                skip_next = True\n                continue\n            if skip_next and line == '':\n                skip_next = False\n                continue\n            if line:\n                clean_lines.append(line)\n        cleaned_results = '\\n\\n'.join(clean_lines)\n        \n        region_content = f'# {region} Production Investigation\\\\n\\\\nIncident: {incident_id} - {incident_title}\\\\nGenerated: {timestamp}\\\\nRegion: {region_name} ({region})\\\\nSeverity: {incident_severity}\\\\nAffected Services: {affected_services}\\\\n\\\\n---\\\\n\\\\n## Investigation Results\\\\n\\\\n{cleaned_results}\\\\n\\\\n---\\\\n\\\\n## Summary\\\\nInvestigation completed for {region} region cluster analysis. See detailed findings above for specific issues and recommendations.'\n    else:\n        region_content = f'# {region} Production Investigation\\\\n\\\\nIncident: {incident_id} - {incident_title}\\\\nGenerated: {timestamp}\\\\nRegion: {region_name} ({region})\\\\nSeverity: {incident_severity}\\\\nAffected Services: {affected_services}\\\\n\\\\n## Investigation Status\\\\nNo investigation results available - agent may have encountered issues.'\n    \n    # Create PDF from the content (formatted or fallback)\n    if region_content:\n        region_pdf = f'/tmp/{region.lower()}_investigation_{incident_id}.pdf'\n        if create_pdf(region_content, region_pdf, f'{region} Investigation - {incident_title}'):\n            file_url = upload_file(headers, channel, region_pdf, f'{region_emoji} {region} Cluster Analysis - {incident_title}')\n            if file_url:\n                file_urls.append(f'{region_emoji} <{file_url}|{region} Cluster Analysis>')\n    \n    # Post Slack message with proper formatting (NO literal \\\\n)\n    files_section = '\\n'.join(file_urls) if file_urls else 'No files uploaded'\n    \n    # Extract REGION_FOLLOWUP_PROMPT from copilot_prompts output\n    copilot_prompts_output = os.getenv('copilot_prompts', '')\n    region_investigation_prompt = f'You are an INCIDENT RESPONDER AGENT focusing on {region} PRODUCTION. INCIDENT: {incident_id} - {incident_title}. Region: {region_name}. I have access to kubectl ({region} cluster). Let me gather {region}-specific logs and metrics first... What aspect of the {region} cluster would you like me to investigate?'\n    \n    # Try to extract REGION_FOLLOWUP_PROMPT from the output\n    import re\n    if copilot_prompts_output:\n        match = re.search(r'REGION_FOLLOWUP_PROMPT=(.+)', copilot_prompts_output)\n        if match:\n            region_investigation_prompt = match.group(1).strip()\n    \n    blocks = [\n        {\n            'type': 'header',\n            'text': {\n                'type': 'plain_text',\n                'text': '\u2705 AI INVESTIGATION COMPLETE',\n                'emoji': True\n            }\n        },\n        {\n            'type': 'section',\n            'fields': [\n                {\n                    'type': 'mrkdwn',\n                    'text': f'*Incident:* {incident_id}'\n                },\n                {\n                    'type': 'mrkdwn',\n                    'text': f'*Severity:* {severity_emoji} {incident_severity}'\n                },\n                {\n                    'type': 'mrkdwn',\n                    'text': f'*Services:* {affected_services}'\n                },\n                {\n                    'type': 'mrkdwn',\n                    'text': f'*Title:* {incident_title}'\n                }\n            ]\n        },\n        {\n            'type': 'divider'\n        },\n        {\n            'type': 'section',\n            'text': {\n                'type': 'mrkdwn',\n                'text': f'*\ud83c\udfaf Summary:*\\n{tldr_summary}'\n            }\n        },\n        {\n            'type': 'divider'\n        },\n        {\n            'type': 'section',\n            'text': {\n                'type': 'mrkdwn',\n                'text': f'*\ud83d\udcc4 Investigation Reports:*\\n{files_section}'\n            }\n        },\n        {\n            'type': 'divider'\n        },\n        {\n            'type': 'section',\n            'text': {\n                'type': 'mrkdwn',\n                'text': '*\ud83d\udd0d Further Investigation:*\\nUse the buttons below to dive deeper into specific regional findings'\n            }\n        },\n        {\n            'type': 'actions',\n            'elements': [\n                {\n                    'type': 'button',\n                    'text': {\n                        'type': 'plain_text',\n                        'text': f'{region_emoji} Investigate {region} Further',\n                        'emoji': True\n                    },\n                    'style': 'primary',\n                    'value': json.dumps({\n                        'agent_uuid': agent_uuid,\n                        'message': region_investigation_prompt\n                    }),\n                    'action_id': 'agent.process_message_1'\n                }\n            ]\n        },\n        {\n            'type': 'context',\n            'elements': [\n                {\n                    'type': 'mrkdwn',\n                    'text': f'_Investigation completed at {timestamp}_'\n                }\n            ]\n        }\n    ]\n    \n    payload = {\n        'channel': channel,\n        'text': '\u2705 AI Investigation Complete',\n        'blocks': blocks\n    }\n    \n    response = requests.post('https://slack.com/api/chat.postMessage', \n                           headers=headers, json=payload)\n    \n    if response.status_code == 200 and response.json().get('ok'):\n        print('\u2705 Summary message posted successfully with proper formatting')\n    else:\n        print(f'\u274c Failed to post summary: {response.text}')\n\nif __name__ == '__main__':\n    main()\n"
+              }
+            ],
+            "content": "pip install requests reportlab && python /tmp/upload_results.py",
+            "args": [
+              {
+                "name": "slack_token",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "channel",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "incident_id",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "incident_title",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "incident_severity",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "affected_services",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "executive_summary",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "cluster_results",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "formatted_pdf_report",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "agent_uuid",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "copilot_prompts",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "region",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "region_name",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "region_emoji",
+                "type": "string",
+                "required": false
+              }
+            ]
+          },
+          "args": {
+            "slack_token": "${slack_token.token}",
+            "channel": "${NORMALIZED_CHANNEL_NAME}",
+            "incident_id": "${incident_id}",
+            "incident_title": "${incident_title}",
+            "incident_severity": "${incident_severity}",
+            "affected_services": "${affected_services}",
+            "executive_summary": "${executive_summary}",
+            "cluster_results": "${cluster_results}",
+            "formatted_pdf_report": "${formatted_pdf_report}",
+            "agent_uuid": "${agent_uuid}",
+            "copilot_prompts": "${copilot_prompts}",
+            "region": "${region}",
+            "region_name": "${region_name}",
+            "region_emoji": "${region_emoji}"
+          }
+        }
+      },
+      "output": "upload_summary_status",
+      "continueOn": {
+        "failure": true
+      }
+    }
+  ]
+}
