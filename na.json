@@ -135,7 +135,8 @@
         "config": {}
       },
       "depends": [
-        "investigate-cluster-health-na",
+        "investigate-cluster-health-na-prod",
+        "investigate-cluster-health-na-dev",
         "investigate-cluster-health-eu", 
         "investigate-cluster-health-na-int"
       ],
@@ -158,8 +159,8 @@
       "output": "investigation_instructions"
     },
     {
-      "name": "investigate-cluster-health-na",
-      "description": "AI-powered incident investigation for NA production and development",
+      "name": "investigate-cluster-health-na-prod",
+      "description": "AI-powered incident investigation for NA production",
       "executor": {
         "type": "agent",
         "config": {
@@ -170,15 +171,36 @@
       "depends": [
         "prepare-investigation-instructions"
       ],
-      "preconditions": {
-        "conditions": [
-          {
-            "field": "${environment}",
-            "operator": "in",
-            "value": ["na-production", "development"]
-          }
-        ]
+      "preconditions": [
+        {
+          "condition": "${environment}",
+          "expected": "na-production"
+        }
+      ],
+      "output": "cluster_results",
+      "continueOn": {
+        "failure": true
+      }
+    },
+    {
+      "name": "investigate-cluster-health-na-dev",
+      "description": "AI-powered incident investigation for development environment",
+      "executor": {
+        "type": "agent",
+        "config": {
+          "agent_name": "chatops-na",
+          "message": "Development Environment Investigation Required. Alert ID: ${alert_id}. Status: ${alert_status}. Priority: ${alert_priority}. Incident: ${incident_body}. Environment: ${environment}. All Tags: ${all_tags}. Hostname: ${hostname}. Please conduct thorough investigation including cluster health, pod status, logs analysis, and provide root cause with remediation steps."
+        }
       },
+      "depends": [
+        "prepare-investigation-instructions"
+      ],
+      "preconditions": [
+        {
+          "condition": "${environment}",
+          "expected": "development"
+        }
+      ],
       "output": "cluster_results",
       "continueOn": {
         "failure": true
@@ -197,15 +219,12 @@
       "depends": [
         "prepare-investigation-instructions"
       ],
-      "preconditions": {
-        "conditions": [
-          {
-            "field": "${environment}",
-            "operator": "equals",
-            "value": "eu-production"
-          }
-        ]
-      },
+      "preconditions": [
+        {
+          "condition": "${environment}",
+          "expected": "eu-production"
+        }
+      ],
       "output": "cluster_results",
       "continueOn": {
         "failure": true
@@ -224,15 +243,12 @@
       "depends": [
         "prepare-investigation-instructions"
       ],
-      "preconditions": {
-        "conditions": [
-          {
-            "field": "${environment}",
-            "operator": "equals",
-            "value": "na-integration"
-          }
-        ]
-      },
+      "preconditions": [
+        {
+          "condition": "${environment}",
+          "expected": "na-integration"
+        }
+      ],
       "output": "cluster_results",
       "continueOn": {
         "failure": true
@@ -240,7 +256,7 @@
     },
     {
       "name": "create-executive-summary-na",
-      "description": "Create executive summary for NA production and development investigation",
+      "description": "Create executive summary for NA production investigation",
       "executor": {
         "type": "agent",
         "config": {
@@ -249,17 +265,38 @@
         }
       },
       "depends": [
-        "investigate-cluster-health-na"
+        "investigate-cluster-health-na-prod"
       ],
-      "preconditions": {
-        "conditions": [
-          {
-            "field": "${environment}",
-            "operator": "in",
-            "value": ["na-production", "development"]
-          }
-        ]
+      "preconditions": [
+        {
+          "condition": "${environment}",
+          "expected": "na-production"
+        }
+      ],
+      "output": "executive_summary",
+      "continueOn": {
+        "failure": true
+      }
+    },
+    {
+      "name": "create-executive-summary-na-dev",
+      "description": "Create executive summary for development environment investigation",
+      "executor": {
+        "type": "agent",
+        "config": {
+          "agent_name": "chatops-na",
+          "message": "Create Executive Summary. Alert ID: ${alert_id}. Incident: ${incident_body}. Environment: ${environment}. Tags: ${all_tags}. Investigation Results: ${cluster_results}. Based on these investigation results, provide comprehensive executive summary including incident overview, key findings, root cause analysis, impact assessment, and recommended actions for stakeholders."
+        }
       },
+      "depends": [
+        "investigate-cluster-health-na-dev"
+      ],
+      "preconditions": [
+        {
+          "condition": "${environment}",
+          "expected": "development"
+        }
+      ],
       "output": "executive_summary",
       "continueOn": {
         "failure": true
@@ -278,15 +315,12 @@
       "depends": [
         "investigate-cluster-health-eu"
       ],
-      "preconditions": {
-        "conditions": [
-          {
-            "field": "${environment}",
-            "operator": "equals",
-            "value": "eu-production"
-          }
-        ]
-      },
+      "preconditions": [
+        {
+          "condition": "${environment}",
+          "expected": "eu-production"
+        }
+      ],
       "output": "executive_summary",
       "continueOn": {
         "failure": true
@@ -305,15 +339,12 @@
       "depends": [
         "investigate-cluster-health-na-int"
       ],
-      "preconditions": {
-        "conditions": [
-          {
-            "field": "${environment}",
-            "operator": "equals",
-            "value": "na-integration"
-          }
-        ]
-      },
+      "preconditions": [
+        {
+          "condition": "${environment}",
+          "expected": "na-integration"
+        }
+      ],
       "output": "executive_summary",
       "continueOn": {
         "failure": true
@@ -325,15 +356,12 @@
       "depends": [
         "create-executive-summary-na"
       ],
-      "preconditions": {
-        "conditions": [
-          {
-            "field": "${environment}",
-            "operator": "in",
-            "value": ["na-production", "development"]
-          }
-        ]
-      },
+      "preconditions": [
+        {
+          "condition": "${environment}",
+          "expected": "na-production"
+        }
+      ],
       "executor": {
         "type": "command",
         "config": {}
@@ -350,15 +378,12 @@
       "depends": [
         "create-executive-summary-eu"
       ],
-      "preconditions": {
-        "conditions": [
-          {
-            "field": "${environment}",
-            "operator": "equals",
-            "value": "eu-production"
-          }
-        ]
-      },
+      "preconditions": [
+        {
+          "condition": "${environment}",
+          "expected": "eu-production"
+        }
+      ],
       "executor": {
         "type": "command",
         "config": {}
@@ -375,15 +400,12 @@
       "depends": [
         "create-executive-summary-na-int"
       ],
-      "preconditions": {
-        "conditions": [
-          {
-            "field": "${environment}",
-            "operator": "equals",
-            "value": "na-integration"
-          }
-        ]
-      },
+      "preconditions": [
+        {
+          "condition": "${environment}",
+          "expected": "na-integration"
+        }
+      ],
       "executor": {
         "type": "command",
         "config": {}
