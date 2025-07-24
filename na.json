@@ -30,20 +30,61 @@
       "output": "validation_status"
     },
     {
-      "name": "classify-incident-agent",
-      "description": "Classify the best agent based on incident text analysis using LLM",
+      "name": "investigate-chatops-na",
+      "description": "NA production investigation using chatops-na agent",
       "executor": {
         "type": "agent",
         "config": {
           "agent_name": "chatops-na",
           "model": "gpt-4o",
-          "message": "Analyze this incident and classify which agent should handle it. Based on the incident details below, respond with ONLY one of these agent names: 'chatops-eu', 'chatops-na-integration', or 'chatops-na'. Rules: Use 'chatops-eu' if incident mentions EU/Europe/European regions, cities like Dublin/London/Frankfurt/Paris/Amsterdam, or EU-specific infrastructure. Use 'chatops-na-integration' if incident mentions integration/staging/test/pre-prod/dev/qa environments. Otherwise use 'chatops-na'. Incident Title: ${incident_title}. Incident Body: ${incident_body}. Respond with only the agent name."
+          "message": "Production Incident Investigation - NA Region. Incident ID: ${incident_id}. Title: ${incident_title}. Severity: ${incident_severity}. Description: ${incident_body}. Please conduct thorough investigation including cluster health, pod status, logs analysis, and provide root cause with remediation steps."
         }
       },
       "depends": [
         "validate-incident"
       ],
-      "output": "classified_agent"
+      "output": "na_results",
+      "continueOn": {
+        "failure": true
+      }
+    },
+    {
+      "name": "investigate-chatops-eu",
+      "description": "EU region investigation using chatops-eu agent",
+      "executor": {
+        "type": "agent",
+        "config": {
+          "agent_name": "chatops-eu",
+          "model": "gpt-4o",
+          "message": "Production Incident Investigation - EU Region. Incident ID: ${incident_id}. Title: ${incident_title}. Severity: ${incident_severity}. Description: ${incident_body}. Please conduct thorough investigation including cluster health, pod status, logs analysis, and provide root cause with remediation steps."
+        }
+      },
+      "depends": [
+        "validate-incident"
+      ],
+      "output": "eu_results",
+      "continueOn": {
+        "failure": true
+      }
+    },
+    {
+      "name": "investigate-chatops-na-integration",
+      "description": "Integration environment investigation using chatops-na-integration agent",
+      "executor": {
+        "type": "agent",
+        "config": {
+          "agent_name": "chatops-na-integration",
+          "model": "gpt-4o",
+          "message": "Production Incident Investigation - Integration Environment. Incident ID: ${incident_id}. Title: ${incident_title}. Severity: ${incident_severity}. Description: ${incident_body}. Please conduct thorough investigation including cluster health, pod status, logs analysis, and provide root cause with remediation steps."
+        }
+      },
+      "depends": [
+        "validate-incident"
+      ],
+      "output": "integration_results",
+      "continueOn": {
+        "failure": true
+      }
     },
     {
       "name": "normalize-channel-name",
@@ -138,7 +179,7 @@
         "config": {}
       },
       "depends": [
-        "investigate-cluster-health"
+        "aggregate-investigation-results"
       ],
       "output": "investigation_progress_message",
       "continueOn": {
@@ -159,38 +200,39 @@
       "output": "investigation_instructions"
     },
     {
-      "name": "investigate-cluster-health",
-      "description": "AI-powered incident investigation using LLM-classified agent",
+      "name": "aggregate-investigation-results",
+      "description": "Aggregate all investigation results and create comprehensive analysis",
       "executor": {
         "type": "agent",
         "config": {
-          "agent_name": "${classified_agent}",
+          "agent_name": "chatops-na",
           "model": "gpt-4o",
-          "message": "Production Incident Investigation Required. Incident ID: ${incident_id}. Title: ${incident_title}. Severity: ${incident_severity}. Description: ${incident_body}. Please conduct thorough investigation including cluster health, pod status, logs analysis, and provide root cause with remediation steps."
+          "message": "Aggregate Investigation Results. Incident ID: ${incident_id}. Title: ${incident_title}. Severity: ${incident_severity}. Please analyze and combine the following investigation results from multiple regions/environments: NA Results: ${na_results}. EU Results: ${eu_results}. Integration Results: ${integration_results}. Create a comprehensive analysis identifying the most relevant findings, root cause, and actionable remediation steps."
         }
       },
       "depends": [
-        "classify-incident-agent",
-        "prepare-investigation-instructions"
+        "investigate-chatops-na",
+        "investigate-chatops-eu", 
+        "investigate-chatops-na-integration"
       ],
-      "output": "cluster_results",
+      "output": "aggregated_results",
       "continueOn": {
         "failure": true
       }
     },
     {
       "name": "create-executive-summary",
-      "description": "Create executive summary using LLM-classified agent",
+      "description": "Create executive summary using aggregated results",
       "executor": {
         "type": "agent",
         "config": {
-          "agent_name": "${classified_agent}",
+          "agent_name": "chatops-na",
           "model": "gpt-4o",
-          "message": "Create Executive Summary. Incident ID: ${incident_id}. Title: ${incident_title}. Severity: ${incident_severity}. Description: ${incident_body}. Investigation Results: ${cluster_results}. Based on these investigation results, provide comprehensive executive summary including incident overview, key findings, root cause analysis, impact assessment, and recommended actions for stakeholders."
+          "message": "Create Executive Summary. Incident ID: ${incident_id}. Title: ${incident_title}. Severity: ${incident_severity}. Description: ${incident_body}. Investigation Results: ${aggregated_results}. Based on these aggregated investigation results from multiple regions/environments, provide comprehensive executive summary including incident overview, key findings, root cause analysis, impact assessment, and recommended actions for stakeholders."
         }
       },
       "depends": [
-        "investigate-cluster-health"
+        "aggregate-investigation-results"
       ],
       "output": "executive_summary",
       "continueOn": {
