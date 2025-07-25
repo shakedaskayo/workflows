@@ -10,7 +10,7 @@
     "incident_url": "$INCIDENT_URL",
     "incident_source": "datadog",
     "incident_owner": "devops",
-    "slack_channel_id": "#inc-$INCIDENT_PUBLIC_ID-$INCIDENT_TITLE",
+    "slack_channel_id": "#kubi-incident-testing",
     "notification_channels": "#kubi-incident-testing",
     "escalation_channel": "#kubi-incident-testing",
     "investigation_timeout": "1200",
@@ -104,7 +104,7 @@
     {
       "name": "normalize-channel-name",
       "description": "Normalize the channel name by replacing spaces with underscores and converting to lower case",
-      "command": "echo '📝 NORMALIZING SLACK CHANNEL NAME'\necho 'Original: ${slack_channel_id}'\n\n# Start with the original channel name\nNORMALIZED=\"${slack_channel_id}\"\n\n# Ensure it starts with # if not already\nif [[ \"$NORMALIZED\" != \\#* ]]; then\n  NORMALIZED=\"#$NORMALIZED\"\nfi\n\n# Convert to lowercase first\nNORMALIZED=$(echo \"$NORMALIZED\" | tr '[:upper:]' '[:lower:]')\n\n# Replace spaces with underscores\nNORMALIZED=$(echo \"$NORMALIZED\" | sed 's/ /_/g')\n\n# Replace any other special characters (except # - _) with underscores\nNORMALIZED=$(echo \"$NORMALIZED\" | sed 's/[^a-z0-9#_-]/_/g')\n\n# Remove multiple consecutive underscores\nNORMALIZED=$(echo \"$NORMALIZED\" | sed 's/_\\+/_/g')\n\n# Remove leading/trailing underscores (but keep the #)\nNORMALIZED=$(echo \"$NORMALIZED\" | sed 's/#_/#/' | sed 's/_$//')\n\n# Ensure channel name is not too long (Slack limit is 80 chars)\nif [ ${#NORMALIZED} -gt 80 ]; then\n  NORMALIZED=${NORMALIZED:0:80}\nfi\n\necho \"Normalized: $NORMALIZED\"\n# Output only the normalized channel name for other steps to use\necho \"$NORMALIZED\" > /tmp/normalized_channel\necho \"$NORMALIZED\"",
+      "command": "echo '📝 BUILDING INCIDENT CHANNEL NAME'\necho 'Incident ID: ${incident_id}'\necho 'Incident Title: ${incident_title}'\n\n# Build channel name in format: #inc-{ID}-{TITLE}\nCHANNEL_NAME=\"#inc-${incident_id}-${incident_title}\"\n\n# Clean the title part - replace spaces and special chars with underscores\nCHANNEL_NAME=$(echo \"$CHANNEL_NAME\" | sed 's/ /_/g')\nCHANNEL_NAME=$(echo \"$CHANNEL_NAME\" | sed 's/[^a-zA-Z0-9#_-]/_/g')\n\n# Convert to lowercase\nCHANNEL_NAME=$(echo \"$CHANNEL_NAME\" | tr '[:upper:]' '[:lower:]')\n\n# Remove multiple consecutive underscores\nCHANNEL_NAME=$(echo \"$CHANNEL_NAME\" | sed 's/_\\+/_/g')\n\n# Remove leading/trailing underscores (but keep the #)\nCHANNEL_NAME=$(echo \"$CHANNEL_NAME\" | sed 's/#_/#/' | sed 's/_$//')\n\n# Ensure channel name is not too long (Slack limit is 80 chars)\nif [ ${#CHANNEL_NAME} -gt 80 ]; then\n  CHANNEL_NAME=${CHANNEL_NAME:0:80}\nfi\n\necho \"Built channel name: $CHANNEL_NAME\"\necho \"$CHANNEL_NAME\" > /tmp/normalized_channel\necho \"$CHANNEL_NAME\"",
       "depends": [
         "validate-incident"
       ],
