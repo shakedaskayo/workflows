@@ -5,9 +5,21 @@
     "incident_id": "$INCIDENT_PUBLIC_ID",
     "incident_title": "$INCIDENT_TITLE",
     "incident_severity": "$INCIDENT_SEVERITY",
+    "incident_priority": "High",
     "incident_body": "$INCIDENT_MSG",
     "incident_url": "$INCIDENT_URL",
-    "slack_channel_id": "$SLACK_CHANNEL_ID"
+    "incident_source": "datadog",
+    "incident_owner": "devops",
+    "slack_channel_id": "#inc-$INCIDENT_PUBLIC_ID-$INCIDENT_TITLE",
+    "notification_channels": "#kubi-incident-testing",
+    "escalation_channel": "#kubi-incident-testing",
+    "investigation_timeout": "1200",
+    "max_retries": "3",
+    "customer_impact": "UNKNOWN",
+    "affected_services": "NA",
+    "dd_environment": "na-integration",
+    "k8s_environment": "p44-qa-integration",
+    "normalize_channel_name": "true"
   },
   "env": {
     "KUBIYA_USER_EMAIL": "${KUBIYA_USER_EMAIL}",
@@ -16,9 +28,9 @@
     "KUBIYA_AUTOMATION": "1",
     "INCIDENT_SEVERITY": "medium",
     "INCIDENT_PRIORITY": "medium",
-    "CHATOPS_NA_AGENT_UUID": "${CHATOPS_NA_AGENT_UUID}",
-    "CHATOPS_EU_AGENT_UUID": "${CHATOPS_EU_AGENT_UUID}",
-    "CHATOPS_INTEGRATION_AGENT_UUID": "${CHATOPS_INTEGRATION_AGENT_UUID}"
+    "CHATOPS_NA_AGENT_UUID": "9c6c370c-e289-411f-9c06-2cacc5d10153",
+    "CHATOPS_EU_AGENT_UUID": "dd354944-fd6f-404c-bf67-090d7e8cfe60",
+    "CHATOPS_INTEGRATION_AGENT_UUID": "20a1366f-4c82-4041-bd9d-29b635b98554"
   },
   "steps": [
     {
